@@ -342,10 +342,6 @@ Replace `<REGION>`, `<ACCOUNT_ID>`, and `<ALARM_NAME>` with your values. Without
 
 The SNS action you configured in Step 4 stays as-is for notifications. The Lambda action runs independently alongside it.
 
-### Testing the alarm
-
-To verify the function is invoked correctly, you can manually set the alarm state via the console: go to the alarm → **Actions** → **Set alarm state** → **ALARM**. This forces a state transition and triggers the Lambda action. Check the function's **CloudWatch Logs** to confirm it ran.
-
 ### Verify the quota request and support case
 
 After a successful invocation, go to **Service Quotas** → **Recent quota increase requests** and confirm a new request appears for **AWS Lambda / Concurrent executions** with status like **Case Opened**:
