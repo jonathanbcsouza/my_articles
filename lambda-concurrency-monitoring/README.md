@@ -249,7 +249,7 @@ def has_pending_request():
 
 def lambda_handler(event, context):
     alarm_name = event.get("alarmData", {}).get("alarmName", "unknown")
-    logger.info(t"Alarm triggered: {alarm_name}")
+    logger.info(f"Alarm triggered: {alarm_name}")
 
     if has_pending_request():
         logger.info("Skipping — a quota increase request is already pending")
@@ -269,7 +269,7 @@ def lambda_handler(event, context):
 
     status = response["RequestedQuota"]["Status"]
     logger.info(
-        t"Requested increase: {current_value} -> {desired_value} | Status: {status}"
+        f"Requested increase: {current_value} -> {desired_value} | Status: {status}"
     )
 
     return {
@@ -286,7 +286,6 @@ Key points about this function:
 - `has_pending_request()` prevents duplicate submissions if the alarm oscillates between OK and ALARM before a previous request is approved
 - `SERVICE_QUOTA()` in CloudWatch dynamically reflects the new limit after approval, so the alarm threshold adjusts automatically
 - The event comes directly from the CloudWatch Alarm action (not via SNS), so the alarm name is at `event["alarmData"]["alarmName"]`
-- Uses Python 3.14 [template strings](https://docs.python.org/3.14/whatsnew/3.14.html#pep-750-template-strings) (`t"..."`) for logging
 - No external dependencies — `boto3` is included in the Lambda runtime
 
 ### IAM permissions
@@ -305,6 +304,16 @@ Attach a policy to the function's execution role with the minimum required permi
         "servicequotas:ListRequestedServiceQuotaChangeHistoryByQuota"
       ],
       "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "arn:aws:iam::*:role/aws-service-role/servicequotas.amazonaws.com/*",
+      "Condition": {
+        "StringEquals": {
+          "iam:AWSServiceName": "servicequotas.amazonaws.com"
+        }
+      }
     }
   ]
 }
