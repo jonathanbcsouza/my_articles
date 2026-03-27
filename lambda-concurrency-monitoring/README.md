@@ -346,7 +346,17 @@ The SNS action you configured in Step 4 stays as-is for notifications. The Lambd
 
 To verify the function is invoked correctly, you can manually set the alarm state via the console: go to the alarm → **Actions** → **Set alarm state** → **ALARM**. This forces a state transition and triggers the Lambda action. Check the function's **CloudWatch Logs** to confirm it ran.
 
-That's it. When concurrency crosses 70%, the alarm fires, your team gets notified via SNS, and the Lambda function requests a limit increase — turning your monitoring from reactive into proactive.
+### Verify the quota request and support case
+
+After a successful invocation, go to **Service Quotas** → **Recent quota increase requests** and confirm a new request appears for **AWS Lambda / Concurrent executions** with status like **Case Opened**:
+
+![Service Quotas — recent quota increase requests showing Lambda concurrent executions case opened](./images/service-quotas-request-list.png)
+
+Click the support case ID to open the case details page and confirm the request metadata (subject, status, category, and creation time):
+
+![AWS Support case details for Lambda quota increase request](./images/service-quotas-case-details.png)
+
+That's it. When concurrency crosses 70%, the alarm fires, your team gets notified via SNS, the Lambda function requests a limit increase, and AWS opens a support case for quota review — turning your monitoring from reactive into proactive.
 
 ---
 
