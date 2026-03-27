@@ -6,6 +6,8 @@ This article covers just enough concurrency fundamentals to understand _why_ `Cl
 
 > **Note:** This guide uses the **AWS Console** intentionally. While production setups should use Infrastructure as Code (CloudFormation, CDK, Terraform), the console makes it easier to understand what each metric and configuration option does. Once you understand the concepts, translating to IaC is straightforward.
 
+Prefer IaC from the start? A full CDK implementation is available in [`./infrastructure/cdk`](./infrastructure/cdk) with brief deploy steps.
+
 ---
 
 ## Quick primer: how Lambda concurrency works
