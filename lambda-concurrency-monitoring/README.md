@@ -204,22 +204,27 @@ Once active, the alarm graph shows your utilization over time:
 
 ## Going further: automate limit increases
 
-Instead of just alerting, you can make this event-driven. When the alarm transitions to `ALARM` state, the SNS notification triggers a Lambda function that automatically submits a Service Quotas increase request — no human intervention needed.
+Instead of just alerting, you can add a Lambda function as a **direct alarm action** that automatically submits a Service Quotas increase request. The alarm triggers two independent actions:
+
+- **SNS** → notifies your team (email, Slack)
+- **Lambda** → requests a concurrency limit increase
 
 ```mermaid
 flowchart LR
     CWAlarm["CloudWatch Alarm"] -->|"ALARM state"| SNS["SNS Topic"]
-    SNS --> Lambda["Lambda Function"]
+    CWAlarm -->|"ALARM state"| Lambda["Lambda Function"]
+    SNS -->|"email / Slack"| Team["Team"]
     Lambda -->|"request_service_quota_increase()"| SQ["Service Quotas API"]
 ```
 
+> **How often does the Lambda fire?** CloudWatch Alarm actions trigger on **state transitions**, not continuously. The function is invoked **once** when the alarm transitions from `OK` to `In alarm`. It won't fire again while the alarm stays in `ALARM` state. If the alarm recovers to `OK` and then breaches again, it fires once more — which is why the function includes an idempotency check to skip duplicate requests.
+
 ### The Lambda function
 
-Create a new Lambda function with the **Python 3.14** runtime. This function receives the SNS event, fetches the current concurrency quota, and requests an increase:
+Create a new Lambda function with the **Python 3.14** runtime. This function receives the alarm event directly, checks for any pending quota increase requests, and submits a new one if none exist:
 
 ```python
 import boto3
-import json
 import logging
 
 logger = logging.getLogger()
@@ -232,9 +237,23 @@ INCREMENT = 500
 client = boto3.client("service-quotas")
 
 
+def has_pending_request():
+    history = client.list_requested_service_quota_change_history_by_quota(
+        ServiceCode=SERVICE_CODE, QuotaCode=QUOTA_CODE
+    )
+    return any(
+        r["Status"] in ("PENDING", "CASE_OPENED")
+        for r in history.get("RequestedQuotas", [])
+    )
+
+
 def lambda_handler(event, context):
-    sns_message = json.loads(event["Records"][0]["Sns"]["Message"])
-    logger.info(t"Alarm triggered: {sns_message.get('AlarmName')}")
+    alarm_name = event.get("alarmData", {}).get("alarmName", "unknown")
+    logger.info(t"Alarm triggered: {alarm_name}")
+
+    if has_pending_request():
+        logger.info("Skipping — a quota increase request is already pending")
+        return {"status": "SKIPPED", "reason": "pending request exists"}
 
     current = client.get_service_quota(
         ServiceCode=SERVICE_CODE, QuotaCode=QUOTA_CODE
@@ -264,7 +283,9 @@ Key points about this function:
 
 - `L-B99A9384` is the quota code for Lambda concurrent executions
 - `INCREMENT = 500` adds 500 units on each trigger — adjust this to your needs
+- `has_pending_request()` prevents duplicate submissions if the alarm oscillates between OK and ALARM before a previous request is approved
 - `SERVICE_QUOTA()` in CloudWatch dynamically reflects the new limit after approval, so the alarm threshold adjusts automatically
+- The event comes directly from the CloudWatch Alarm action (not via SNS), so the alarm name is at `event["alarmData"]["alarmName"]`
 - Uses Python 3.14 [template strings](https://docs.python.org/3.14/whatsnew/3.14.html#pep-750-template-strings) (`t"..."`) for logging
 - No external dependencies — `boto3` is included in the Lambda runtime
 
@@ -280,7 +301,8 @@ Attach a policy to the function's execution role with the minimum required permi
       "Effect": "Allow",
       "Action": [
         "servicequotas:GetServiceQuota",
-        "servicequotas:RequestServiceQuotaIncrease"
+        "servicequotas:RequestServiceQuotaIncrease",
+        "servicequotas:ListRequestedServiceQuotaChangeHistoryByQuota"
       ],
       "Resource": "*"
     }
@@ -290,11 +312,15 @@ Attach a policy to the function's execution role with the minimum required permi
 
 ### Wiring it up in the console
 
-1. **Create the function:** Go to **Lambda** → **Create function** → Author from scratch. Name it (e.g. `auto-increase-lambda-concurrency`), select **Python 3.14** as the runtime, and paste the code above.
+1. **Create the function:** Go to **Lambda** → **Create function** → Author from scratch. Name it (e.g. `limit-increase-request-python-314`), select **Python 3.14** as the runtime, and paste the code above.
 2. **Attach the IAM policy:** Go to the function's **Configuration** → **Permissions** → click the execution role → **Add permissions** → **Create inline policy** → paste the JSON above.
-3. **Add the SNS trigger:** Go to the function's **Configuration** → **Triggers** → **Add trigger** → select the **SNS topic** you configured in Step 4 of the alarm setup.
+3. **Add the Lambda alarm action:** Go back to your CloudWatch alarm → **Edit** → **Configure actions** → **Add Lambda action**. Select **In alarm** as the trigger state and choose your function:
 
-That's it. When concurrency crosses 70%, the alarm fires, SNS delivers the message, and the function requests a limit increase — turning your monitoring from reactive into proactive.
+![CloudWatch alarm — adding a Lambda action triggered on In alarm state](./images/alarm-lambda-action.png)
+
+The SNS action you configured in Step 4 stays as-is for notifications. The Lambda action runs independently alongside it.
+
+That's it. When concurrency crosses 70%, the alarm fires, your team gets notified via SNS, and the Lambda function requests a limit increase — turning your monitoring from reactive into proactive.
 
 ---
 
