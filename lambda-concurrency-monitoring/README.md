@@ -314,11 +314,28 @@ Attach a policy to the function's execution role with the minimum required permi
 
 1. **Create the function:** Go to **Lambda** → **Create function** → Author from scratch. Name it (e.g. `limit-increase-request-python-314`), select **Python 3.14** as the runtime, and paste the code above.
 2. **Attach the IAM policy:** Go to the function's **Configuration** → **Permissions** → click the execution role → **Add permissions** → **Create inline policy** → paste the JSON above.
-3. **Add the Lambda alarm action:** Go back to your CloudWatch alarm → **Edit** → **Configure actions** → **Add Lambda action**. Select **In alarm** as the trigger state and choose your function:
+3. **Grant CloudWatch permission to invoke the function.** CloudWatch Alarms use a specific service principal and need explicit permission on the Lambda function. Run:
+
+```bash
+aws lambda add-permission \
+  --function-name "limit-increase-request-python-314" \
+  --statement-id "AllowCloudWatchAlarmInvoke" \
+  --action "lambda:InvokeFunction" \
+  --principal "lambda.alarms.cloudwatch.amazonaws.com" \
+  --source-arn "arn:aws:cloudwatch:<REGION>:<ACCOUNT_ID>:alarm:<ALARM_NAME>"
+```
+
+Replace `<REGION>`, `<ACCOUNT_ID>`, and `<ALARM_NAME>` with your values. Without this, CloudWatch will silently fail to invoke the function.
+
+4. **Add the Lambda alarm action:** Go back to your CloudWatch alarm → **Edit** → **Configure actions** → **Add Lambda action**. Select **In alarm** as the trigger state and choose your function:
 
 ![CloudWatch alarm — adding a Lambda action triggered on In alarm state](./images/alarm-lambda-action.png)
 
 The SNS action you configured in Step 4 stays as-is for notifications. The Lambda action runs independently alongside it.
+
+### Testing the alarm
+
+To verify the function is invoked correctly, you can manually set the alarm state via the console: go to the alarm → **Actions** → **Set alarm state** → **ALARM**. This forces a state transition and triggers the Lambda action. Check the function's **CloudWatch Logs** to confirm it ran.
 
 That's it. When concurrency crosses 70%, the alarm fires, your team gets notified via SNS, and the Lambda function requests a limit increase — turning your monitoring from reactive into proactive.
 
