@@ -2,7 +2,7 @@
 
 You use AWS Lambda and want to get notified when concurrency utilization reaches 70% — before throttling happens, not after.
 
-This article covers just enough concurrency fundamentals to understand *why* `ClaimedAccountConcurrency` is the right metric, then walks through setting up a CloudWatch alarm step by step.
+This article covers just enough concurrency fundamentals to understand _why_ `ClaimedAccountConcurrency` is the right metric, then walks through setting up a CloudWatch alarm step by step.
 
 > **Note:** This guide uses the **AWS Console** intentionally. While production setups should use Infrastructure as Code (CloudFormation, CDK, Terraform), the console makes it easier to understand what each metric and configuration option does. Once you understand the concepts, translating to IaC is straightforward.
 
@@ -42,11 +42,11 @@ By default, every account gets **1,000 concurrent executions per Region** — a 
 
 Lambda exposes several concurrency metrics in CloudWatch:
 
-| Metric | What it measures |
-|--------|-----------------|
-| `ConcurrentExecutions` | Actively running invocations |
-| `UnreservedConcurrentExecutions` | Invocations using the shared pool |
-| `ClaimedAccountConcurrency` | Total concurrency **unavailable** for new on-demand invocations |
+| Metric                           | What it measures                                                |
+| -------------------------------- | --------------------------------------------------------------- |
+| `ConcurrentExecutions`           | Actively running invocations                                    |
+| `UnreservedConcurrentExecutions` | Invocations using the shared pool                               |
+| `ClaimedAccountConcurrency`      | Total concurrency **unavailable** for new on-demand invocations |
 
 ### The problem with ConcurrentExecutions
 
@@ -65,13 +65,13 @@ ClaimedAccountConcurrency = UnreservedConcurrentExecutions + Allocated Concurren
 
 ### Example: why this distinction matters
 
-| Configuration | Value |
-|--------------|-------|
-| Account concurrency limit | 1,000 |
-| Reserved concurrency (function A) | 400 |
-| Reserved concurrency (function B) | 400 |
-| Provisioned concurrency (function C) | 100 |
-| Active executions (all within functions A, B, C) | 50 |
+| Configuration                                    | Value |
+| ------------------------------------------------ | ----- |
+| Account concurrency limit                        | 1,000 |
+| Reserved concurrency (function A)                | 400   |
+| Reserved concurrency (function B)                | 400   |
+| Provisioned concurrency (function C)             | 100   |
+| Active executions (all within functions A, B, C) | 50    |
 
 Since all 50 active executions are running within functions that have reserved or provisioned concurrency, `UnreservedConcurrentExecutions` is **0**. The allocated concurrency (400 + 400 + 100) is claimed regardless of actual usage:
 
@@ -79,7 +79,7 @@ Since all 50 active executions are running within functions that have reserved o
 - `ClaimedAccountConcurrency` reports: **900** (0 unreserved + 900 allocated)
 - Actually available for new on-demand invocations: **100**
 
-Only 50 invocations are running, but 900 units are claimed. If other functions spike, only 100 units remain before throttling. If any executions were running on *unreserved* functions, `ClaimedAccountConcurrency` would be even higher.
+Only 50 invocations are running, but 900 units are claimed. If other functions spike, only 100 units remain before throttling. If any executions were running on _unreserved_ functions, `ClaimedAccountConcurrency` would be even higher.
 
 This is why Lambda uses `ClaimedAccountConcurrency` — not `ConcurrentExecutions` — to determine whether capacity is available.
 
@@ -96,27 +96,54 @@ This is why Lambda uses `ClaimedAccountConcurrency` — not `ConcurrentExecution
 ```json
 {
   "metrics": [
-    [ "AWS/Lambda", "ConcurrentExecutions", {
-      "id": "m1", "yAxis": "left",
-      "label": "ConcurrentExecutionsMetric", "visible": false
-    }],
-    [ { "expression": "SERVICE_QUOTA(m1)",
+    [
+      "AWS/Lambda",
+      "ConcurrentExecutions",
+      {
+        "id": "m1",
+        "yAxis": "left",
+        "label": "ConcurrentExecutionsMetric",
+        "visible": false
+      }
+    ],
+    [
+      {
+        "expression": "SERVICE_QUOTA(m1)",
         "label": "Current Concurrent Limit",
-        "id": "e1", "period": 60, "yAxis": "left",
+        "id": "e1",
+        "period": 60,
+        "yAxis": "left",
         "color": "#9467bd"
-    }],
-    [ "AWS/Lambda", "ClaimedAccountConcurrency", {
-      "id": "m2", "yAxis": "left", "color": "#ff7f0e"
-    }],
-    [ { "expression": "(m2/e1) * 100",
+      }
+    ],
+    [
+      "AWS/Lambda",
+      "ClaimedAccountConcurrency",
+      {
+        "id": "m2",
+        "yAxis": "left",
+        "color": "#ff7f0e"
+      }
+    ],
+    [
+      {
+        "expression": "(m2/e1) * 100",
         "label": "% Claimed",
-        "id": "e2", "period": 60, "yAxis": "left"
-    }],
-    [ { "expression": "e1 - m2",
+        "id": "e2",
+        "period": 60,
+        "yAxis": "left"
+      }
+    ],
+    [
+      {
+        "expression": "e1 - m2",
         "label": "Available",
-        "id": "e5", "period": 60, "yAxis": "left",
+        "id": "e5",
+        "period": 60,
+        "yAxis": "left",
         "color": "#2ca02c"
-    }]
+      }
+    ]
   ],
   "sparkline": false,
   "view": "pie",
@@ -134,13 +161,13 @@ This is why Lambda uses `ClaimedAccountConcurrency` — not `ConcurrentExecution
 
 #### What each metric does
 
-| ID | Type | Purpose |
-|----|------|---------|
-| `m1` | Metric | `ConcurrentExecutions` — used as input for `SERVICE_QUOTA()`. Hidden from the graph. |
-| `e1` | Expression | `SERVICE_QUOTA(m1)` — dynamically fetches your actual regional concurrency limit |
-| `m2` | Metric | `ClaimedAccountConcurrency` — the metric we want to monitor |
-| `e2` | Expression | `(m2/e1) * 100` — utilization as a percentage |
-| `e5` | Expression | `e1 - m2` — remaining available concurrency |
+| ID   | Type       | Purpose                                                                              |
+| ---- | ---------- | ------------------------------------------------------------------------------------ |
+| `m1` | Metric     | `ConcurrentExecutions` — used as input for `SERVICE_QUOTA()`. Hidden from the graph. |
+| `e1` | Expression | `SERVICE_QUOTA(m1)` — dynamically fetches your actual regional concurrency limit     |
+| `m2` | Metric     | `ClaimedAccountConcurrency` — the metric we want to monitor                          |
+| `e2` | Expression | `(m2/e1) * 100` — utilization as a percentage                                        |
+| `e5` | Expression | `e1 - m2` — remaining available concurrency                                          |
 
 > **Why `SERVICE_QUOTA(m1)` instead of hardcoding 1,000?** The concurrency limit is a soft limit. If you've requested an increase, `SERVICE_QUOTA()` dynamically reflects your actual current limit — no need to update the alarm every time your quota changes.
 
@@ -163,14 +190,14 @@ This confirms the metrics and expressions are working correctly before creating 
 1. Click the **bell icon** next to the `% Claimed` expression (`e2`)
 2. Configure the alarm condition:
 
-| Setting | Value | Why |
-|---------|-------|-----|
-| **Metric** | `% Claimed` (e2) | The utilization percentage we calculated |
-| **Threshold type** | Static | Fixed threshold value |
-| **Condition** | Greater than **70** | 70% gives headroom before hitting the limit |
-| **Period** | 1 minute | Matches Lambda's metric emission granularity |
-| **Statistic** | Maximum | Catches spikes — average would smooth them out |
-| **Datapoints to alarm** | 1 out of 1 | Triggers on the first breach |
+| Setting                 | Value               | Why                                            |
+| ----------------------- | ------------------- | ---------------------------------------------- |
+| **Metric**              | `% Claimed` (e2)    | The utilization percentage we calculated       |
+| **Threshold type**      | Static              | Fixed threshold value                          |
+| **Condition**           | Greater than **70** | 70% gives headroom before hitting the limit    |
+| **Period**              | 1 minute            | Matches Lambda's metric emission granularity   |
+| **Statistic**           | Maximum             | Catches spikes — average would smooth them out |
+| **Datapoints to alarm** | 1 out of 1          | Triggers on the first breach                   |
 
 ### Step 4: Configure actions
 
@@ -236,7 +263,6 @@ INCREMENT = 500
 
 client = boto3.client("service-quotas")
 
-
 def has_pending_request():
     history = client.list_requested_service_quota_change_history_by_quota(
         ServiceCode=SERVICE_CODE, QuotaCode=QUOTA_CODE
@@ -245,7 +271,6 @@ def has_pending_request():
         r["Status"] in ("PENDING", "CASE_OPENED")
         for r in history.get("RequestedQuotas", [])
     )
-
 
 def lambda_handler(event, context):
     alarm_name = event.get("alarmData", {}).get("alarmName", "unknown")
@@ -367,4 +392,4 @@ That's it. When concurrency crosses 70%, the alarm fires, your team gets notifie
 
 ---
 
-*References: [AWS Lambda — Understanding function scaling](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html) · [Monitoring concurrency](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-concurrency.html)*
+_References: [AWS Lambda — Understanding function scaling](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html) · [Monitoring concurrency](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-concurrency.html)_
