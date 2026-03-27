@@ -140,11 +140,19 @@ Only 50 invocations are running, but 900 units are claimed. If a spike hits, onl
 
 > **Why `SERVICE_QUOTA(m1)` instead of hardcoding 1,000?** The concurrency limit is a soft limit. If you've requested an increase, `SERVICE_QUOTA()` dynamically reflects your actual current limit — no need to update the alarm every time your quota changes.
 
-### Step 2: Verify with the Pie chart view
+### Step 2: Verify the metrics
 
-Switch the view to **Pie** and select only `ClaimedAccountConcurrency` and `Available` to get an instant visual of your capacity split:
+After pasting the JSON and clicking **Update**, you should see the metrics table populated with all five entries. The table shows each metric's ID, label, details (source metric or expression), statistic, and period:
 
-![Pie chart — ClaimedAccountConcurrency at 33.3%, Available at 66.7%](./images/pie-chart-concurrency.png)
+![CloudWatch metrics console — pie chart view with metrics table showing m1, e1, m2, e2, and e5](./images/metrics-pie-chart-full.png)
+
+In the **Pie** view, select only `ClaimedAccountConcurrency` and `Available` (checkboxes on the left) to get an instant visual of how much of your concurrency pool is claimed vs. free.
+
+Switch to the **Line** view and select all metrics to see the values over time. Hovering over the chart reveals the actual numbers at any point — here, the tooltip shows a `Current Concurrent Limit` of 1,000, `Available` at 999, `ClaimedAccountConcurrency` at 1, and `% Claimed` at 0.1%:
+
+![CloudWatch metrics console — line chart view with tooltip showing current values](./images/metrics-line-chart-full.png)
+
+This confirms the metrics and expressions are working correctly before creating the alarm.
 
 ### Step 3: Create the alarm
 
