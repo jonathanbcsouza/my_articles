@@ -10,7 +10,7 @@ This article covers just enough concurrency fundamentals to understand *why* `Cl
 
 ## Quick primer: how Lambda concurrency works
 
-### One request = one execution environment
+### One concurrent request = one execution environment
 
 From [AWS documentation](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html):
 
@@ -60,7 +60,7 @@ ClaimedAccountConcurrency = UnreservedConcurrentExecutions + Allocated Concurren
 
 **Allocated concurrency** includes:
 
-- **Reserved concurrency** — dedicates a fixed slice of the pool to a function. No other function can use it, even if the function is idle. No additional charge.
+- **Reserved concurrency** — sets both a **floor and ceiling** for a function's concurrency. The function gets a guaranteed slice of the pool, but it also can't exceed that amount or use unreserved capacity. No other function can use it, even if the function is idle. No additional charge.
 - **Provisioned concurrency** — pre-initializes environments to eliminate cold starts. Counts against the pool even when not processing requests. Incurs additional charges.
 
 ### Example: why this distinction matters
@@ -71,13 +71,17 @@ ClaimedAccountConcurrency = UnreservedConcurrentExecutions + Allocated Concurren
 | Reserved concurrency (function A) | 400 |
 | Reserved concurrency (function B) | 400 |
 | Provisioned concurrency (function C) | 100 |
-| Active executions right now | 50 |
+| Active executions (all within functions A, B, C) | 50 |
+
+Since all 50 active executions are running within functions that have reserved or provisioned concurrency, `UnreservedConcurrentExecutions` is **0**. The allocated concurrency (400 + 400 + 100) is claimed regardless of actual usage:
 
 - `ConcurrentExecutions` reports: **50**
-- `ClaimedAccountConcurrency` reports: **900**
+- `ClaimedAccountConcurrency` reports: **900** (0 unreserved + 900 allocated)
 - Actually available for new on-demand invocations: **100**
 
-Only 50 invocations are running, but 900 units are claimed. If a spike hits, only 100 units remain before throttling. This is why Lambda uses `ClaimedAccountConcurrency` — not `ConcurrentExecutions` — to determine whether capacity is available.
+Only 50 invocations are running, but 900 units are claimed. If other functions spike, only 100 units remain before throttling. If any executions were running on *unreserved* functions, `ClaimedAccountConcurrency` would be even higher.
+
+This is why Lambda uses `ClaimedAccountConcurrency` — not `ConcurrentExecutions` — to determine whether capacity is available.
 
 ---
 
