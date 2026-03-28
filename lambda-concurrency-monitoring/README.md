@@ -4,13 +4,13 @@ You use AWS Lambda and want to get notified when concurrency utilization reaches
 
 This article covers just enough concurrency fundamentals to understand _why_ `ClaimedAccountConcurrency` is the right metric, then walks through setting up a CloudWatch alarm step by step.
 
-> **Note:** This guide uses the **AWS Console** intentionally. While production setups should use Infrastructure as Code (CloudFormation, CDK, Terraform), the console makes it easier to understand what each metric and configuration option does. Once you understand the concepts, translating to IaC is straightforward.
+> **Note:** This guide uses the **AWS Console** intentionally. While using Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, in this guide I am adding instructions via console first for learning purposes. Once you understand the concepts, translating to IaC will be straightforward.
 
-Prefer IaC from the start? A full CDK implementation is available in [`./infrastructure/cdk`](./infrastructure/cdk) with brief deploy steps.
+Ready for IaC? Okay, a CDK example, ready for deployment is available in [`./infrastructure/cdk`](./infrastructure/cdk) with brief deploy steps.
 
 ---
 
-## Quick primer: how Lambda concurrency works
+## Lambda concurrency works
 
 ### One concurrent request = one execution environment
 
@@ -20,15 +20,15 @@ From [AWS documentation](https://docs.aws.amazon.com/lambda/latest/dg/lambda-con
 
 For each concurrent request, Lambda provisions a separate instance of your execution environment. Each environment handles **only one request at a time**. When it's busy (during both the Init and Invoke phases), it cannot accept other requests.
 
-Lambda reuses environments when possible — a finished environment can handle the next request without re-initializing (warm start), which is faster than creating a new one (cold start).
+Lambda reuses environments when possible and a finished environment can handle the next request without re-initializing (warm start).
 
 ### Visualizing concurrency
 
-When multiple requests arrive simultaneously, Lambda spins up as many environments as needed. Draw a vertical line at any point in time, and count the active environments — that's your concurrency.
+When multiple requests arrive simultaneously, Lambda spins up as many environments as needed. To ilustrate this, draw a vertical line at any point in time, and count the active environments - that's your concurrency in that point in time.
 
 ![Lambda concurrency diagram — multiple concurrent requests over time](./images/lambda-concurrency-diagram.png)
 
-In this diagram, at the dashed green line there are **5 active environments**, so the concurrency at that moment is **5**. Requests 6–8 and 10 reuse environments that finished earlier (warm starts), while request 9 requires a new environment (cold start).
+In the diagram above, at the dashed green line there are **5 active environments**, so the concurrency at that moment is **5**. Requests 6–8 and 10 reuse environments that finished earlier (warm starts), while request 9 requires a new environment (cold start).
 
 ### Concurrency is regional and shared
 
@@ -40,9 +40,9 @@ By default, every account gets **1,000 concurrent executions per Region** — a 
 
 ---
 
-## Why ClaimedAccountConcurrency is the right metric
+## Understanding the ClaimedAccountConcurrency
 
-Lambda exposes several concurrency metrics in CloudWatch:
+For omintoring concurrency Lambda exposes different metrics in CloudWatch:
 
 | Metric                           | What it measures                                                |
 | -------------------------------- | --------------------------------------------------------------- |
@@ -50,7 +50,7 @@ Lambda exposes several concurrency metrics in CloudWatch:
 | `UnreservedConcurrentExecutions` | Invocations using the shared pool                               |
 | `ClaimedAccountConcurrency`      | Total concurrency **unavailable** for new on-demand invocations |
 
-### The problem with ConcurrentExecutions
+### Ahh okay, I should track ConcurrentExecutions, that is it! Nope.
 
 `ConcurrentExecutions` only counts what's **actively running**. It ignores concurrency that's been **allocated** through reserved or provisioned concurrency — capacity that's blocked from other functions even when idle.
 
@@ -82,6 +82,8 @@ Since all 50 active executions are running within functions that have reserved o
 - Actually available for new on-demand invocations: **100**
 
 Only 50 invocations are running, but 900 units are claimed. If other functions spike, only 100 units remain before throttling. If any executions were running on _unreserved_ functions, `ClaimedAccountConcurrency` would be even higher.
+
+For example, if an unreserved function suddenly receives **150 concurrent requests**, only **100** can run immediately and about **50** are throttled (you'll see this in the `Throttles` metric).
 
 This is why Lambda uses `ClaimedAccountConcurrency` — not `ConcurrentExecutions` — to determine whether capacity is available.
 
