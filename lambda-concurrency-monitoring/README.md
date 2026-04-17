@@ -60,8 +60,6 @@ For this specific example above, `ClaimedAccountConcurrency` is equal to 9, and 
 
 #### Scenario 2 - Account Concurrency Limit: 1,000
 
-Another scenario:
-
 | Configuration | Value |
 | :------------------------------------------------ | :----- |
 | Account concurrency limit | 1,000 |
