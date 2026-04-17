@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 680" width="100%" height="100%" style="background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+
+  <text x="50" y="60" font-size="22" font-weight="700" fill="#2C3E50">Scenario 1 - Account Concurrency Limit: 10</text>
+
+  <!-- Y axis -->
+  <line x1="120" y1="120" x2="120" y2="470" stroke="#2C3E50" stroke-width="2" />
+  <!-- X axis -->
+  <line x1="120" y1="470" x2="420" y2="470" stroke="#2C3E50" stroke-width="2" />
+
+  <!-- Y axis labels: scale 0..10 -> 470..120 (35 px per unit) -->
+  <g font-size="14" fill="#555" text-anchor="end">
+    <text x="105" y="475">0</text>
+    <text x="105" y="405">2</text>
+    <text x="105" y="335">4</text>
+    <text x="105" y="265">6</text>
+    <text x="105" y="195">8</text>
+    <text x="105" y="125">10</text>
+  </g>
+  <g stroke="#2C3E50" stroke-width="1">
+    <line x1="115" y1="400" x2="120" y2="400" />
+    <line x1="115" y1="330" x2="120" y2="330" />
+    <line x1="115" y1="260" x2="120" y2="260" />
+    <line x1="115" y1="190" x2="120" y2="190" />
+    <line x1="115" y1="120" x2="120" y2="120" />
+  </g>
+
+  <!-- Account limit dashed line (y=10 -> 120) -->
+  <line x1="120" y1="120" x2="420" y2="120" stroke="#2C3E50" stroke-width="2" stroke-dasharray="6,4" />
+
+  <!-- Stacked bar: unit = 35 px, bar width 200 starting x=180 -->
+  <!-- RC(A)=3: y=365..470 -->
+  <!-- RC(B)=3: y=260..365 -->
+  <!-- PC(C)=2: y=190..260 -->
+  <!-- D=1:     y=155..190 -->
+  <g stroke="#ffffff" stroke-width="1.5">
+    <rect x="180" y="365" width="200" height="105" fill="#8C9298" />
+    <rect x="180" y="260" width="200" height="105" fill="#A8ADb3" />
+    <rect x="180" y="190" width="200" height="70"  fill="#F59E0B" />
+    <rect x="180" y="155" width="200" height="35"  fill="#7C3AED" />
+  </g>
+
+  <!-- In-bar labels -->
+  <g font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">
+    <text x="280" y="414">Function A</text>
+    <text x="280" y="432" font-weight="500" font-size="13" fill="#EAECEE">RC = 3</text>
+
+    <text x="280" y="309">Function B</text>
+    <text x="280" y="327" font-weight="500" font-size="13" fill="#EAECEE">RC = 3</text>
+
+    <text x="280" y="222">Function C</text>
+    <text x="280" y="240" font-weight="500" font-size="13" fill="#FDF2D6">PC = 2</text>
+
+    <text x="280" y="177" font-size="13">Function D · UR = 1</text>
+  </g>
+
+  <!-- Callouts on the right -->
+  <g font-size="15" font-weight="bold">
+    <text x="440" y="100" fill="#2C3E50">Limit = 10</text>
+    <polyline points="432,95 400,120" fill="none" stroke="#2C3E50" stroke-width="1" />
+
+    <!-- Open bracket "]" marking the 1-unit available gap (y=120..155) -->
+    <!-- Bracket path: starts at inner edge, goes right, down, back left -->
+    <path d="M 380,120 L 395,120 L 395,155 L 380,155" fill="none" stroke="#22C55E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+    <polyline points="395,137 415,137" fill="none" stroke="#22C55E" stroke-width="1.5" />
+    <text x="420" y="142" fill="#22C55E">1 available</text>
+
+    <!-- Function D (unreserved) callout -->
+    <polyline points="380,172 415,172" fill="none" stroke="#7C3AED" stroke-width="1.5" />
+    <text x="420" y="177" fill="#7C3AED">Function D - UR = 1</text>
+
+    <!-- Function C (provisioned) callout -->
+    <polyline points="380,225 415,225" fill="none" stroke="#F59E0B" stroke-width="1.5" />
+    <text x="420" y="230" fill="#F59E0B">Function C - PC = 2</text>
+  </g>
+
+  <!-- Claimed label under the bar -->
+  <text x="280" y="505" font-size="16" font-weight="bold" fill="#C0392B" text-anchor="middle">Claimed = 9</text>
+
+  <!-- Formula box -->
+  <rect x="50" y="540" width="980" height="55" rx="6" fill="#F4F4F5" />
+  <text x="70" y="573" font-family="'Courier New', Courier, monospace" font-size="16" fill="#1F2937">ClaimedAccountConcurrency = 1 (unreserved) + 8 (allocated: 3+3+2) = <tspan font-weight="bold">9</tspan></text>
+
+  <!-- Legend -->
+  <g font-size="15" font-weight="500" fill="#2C3E50">
+    <rect x="50" y="625" width="18" height="18" rx="3" fill="#8C9298" />
+    <text x="78" y="639">Reserved Concurrency (RC)</text>
+
+    <rect x="305" y="625" width="18" height="18" rx="3" fill="#F59E0B" />
+    <text x="333" y="639">Provisioned Concurrency (PC)</text>
+
+    <rect x="580" y="625" width="18" height="18" rx="3" fill="#7C3AED" />
+    <text x="608" y="639">Unreserved Executions</text>
+
+    <rect x="800" y="625" width="18" height="18" rx="3" fill="#22C55E" />
+    <text x="828" y="639">Available</text>
+
+    <line x1="915" y1="634" x2="955" y2="634" stroke="#2C3E50" stroke-width="2" stroke-dasharray="6,4" />
+    <text x="963" y="639">Account Limit</text>
+  </g>
+</svg>

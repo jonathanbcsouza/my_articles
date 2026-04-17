@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Node (CDK)
+node_modules/
+cdk.out/
+*.js.map
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Temp / duplicates
+*copy.*
+*copy *
