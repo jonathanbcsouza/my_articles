@@ -1,6 +1,6 @@
 In this article we will explore how to use `ClaimedAccountConcurrency` to monitor concurrency in your region. I will also walk you through understanding this metric, how to set up a CloudWatch alarm step by step, SNS Topic and automate limit increase requests (proportionally to your account limit).
 
-![Hero image: AWS Lambda concurrency monitoring overview with ClaimedAccountConcurrency](/media/postImages/original/IMHuM7_tAXSFGdfnb6cOdLbA)
+![Hero image: AWS Lambda concurrency monitoring overview with ClaimedAccountConcurrency](./images/Diagram.drawio.png)
 
 ## 1. Understanding the ClaimedAccountConcurrency
 
@@ -75,18 +75,19 @@ ClaimedAccountConcurrency = 60 + allocated concurrency (400 + 400 + 100 = 900)
 
 As per the calculation above, only 60 invocations are running, but 900 units are claimed, so actual concurrency available for new on-demand invocations is **40**.
 
-![Example 2 breakdown (steady state): account limit 1,000, 60 unreserved executions + 900 allocated = 960 claimed, 40 available](./images/breakdown-example2-a.png)
+![Example 2 breakdown (spike scenario): 150 concurrent requests arrive on unreserved functions, 40 run immediately and 110 are throttled](./images/breakdown-example2-b.png)
 
 If any executions were running on _unreserved_ functions, `ClaimedAccountConcurrency` and that goes beyond the regional limit will encounter throttling. Possible scenario: If functions D, E, F or any other function in your account (rather than A, B, and C), uses more than 40 concurrent environments.
 
 > In this case if any other functions suddenly spikes , and between them, **150 concurrent executions** happens, only **40** can run immediately and **110** will be throttled (you'll see this in the `Throttles` metric), because only 40 units of unreserved capacity remain (1,000 − 960 = 40)
 
-![Example 2 breakdown (spike scenario): 150 concurrent requests arrive on unreserved functions, 40 run immediately and 110 are throttled](./images/breakdown-example2-b.png)
+
+![Example 2 breakdown (steady state): account limit 1,000, 60 unreserved executions + 900 allocated = 960 claimed, 40 available](./images/breakdown-example2-a.png)
 
 
 Once we reviewed the above, this explanation from [official documentation](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-concurrency.html#claimed-account-concurrency) will be more digestible:
 
-![Official AWS documentation diagram: function-orange (RC=500) and function-blue (PC=300) claim 800 units regardless of actual invocations at t1, t2, t3](/media/postImages/original/IMFS5e6RVqQBudZH7Rfj70ow)
+![Official AWS documentation diagram: function-orange (RC=500) and function-blue (PC=300) claim 800 units regardless of actual invocations at t1, t2, t3](./images/lambda-concurrency-diagram.png)
 
 Throughout this example above, ClaimedAccountConcurrency is 800 at minimum, despite low actual concurrency utilization across your functions. This is because you allocated 800 total units of concurrency for function-orange and function-blue. From Lambda's perspective, you have "claimed" this concurrency for use, so you effectively have only 200 units of concurrency remaining for other functions.
 
