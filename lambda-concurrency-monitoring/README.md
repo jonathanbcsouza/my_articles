@@ -190,7 +190,7 @@ After pasting the JSON and clicking **Update**, you should see the metrics table
 
 If you would like to explore a **Pie** view, select only `ClaimedAccountConcurrency` and `Available` (checkboxes on the left). Ensure to select the specific time period where you intend to reflect on the chart visualization.
 
-![CloudWatch metrics console - pie chart view showing ClaimedAccountConcurrency vs Available with metrics table (m1, e1, m2, e2, e5)](./images/metrics-pie-chart-full.png)
+![CloudWatch metrics console - pie chart view showing ClaimedAccountConcurrency vs Available with metrics table (m1, e1, m2, e2, e5)](./images/metrics-pie-chart-full.jpeg)
 
 Once you have the above, this confirms you have the metrics and expressions that are relevant for monitoring this regional limit.
 
