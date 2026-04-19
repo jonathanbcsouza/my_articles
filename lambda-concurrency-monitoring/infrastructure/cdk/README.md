@@ -1,11 +1,11 @@
-# CDK deployment (full stack)
+# CDK deployment (Python)
 
 This CDK project creates the full monitoring and automation stack:
 
 - CloudWatch metric math alarm based on `% Claimed = (ClaimedAccountConcurrency / SERVICE_QUOTA(ConcurrentExecutions)) * 100`
 - SNS topic for notifications
-- Lambda function that requests a Lambda concurrency quota increase
-- IAM permissions required by the Lambda function
+- Lambda function (**Python 3.14**, named `limit-increase-request-python-314`) that requests a bounded Lambda concurrency quota increase, then sets its own reserved concurrency to 0 so the next alarm firing requires a human decision
+- IAM permissions required by the Lambda function (including scoped `lambda:PutFunctionConcurrency` so the function can set its own reserved concurrency)
 - Lambda invoke permission for CloudWatch alarm actions
 
 ## Prerequisites
@@ -35,9 +35,27 @@ cdk deploy
 ## Customize before deploy
 
 - Alarm threshold (default 70%): update `threshold` in `stack.py`
-- Requested increment (default 500): update `INCREMENT` env var in `stack.py`
-- Function/topic names: update `function_name` and `topic_name` in `stack.py`
+- Proportional increase (default 10%): update the `INCREMENT_PERCENT` env var in `stack.py`
+- Function/topic names: update `FUNCTION_NAME` and `topic_name` in `stack.py` — note that if you rename the function, also update the `lambda:PutFunctionConcurrency` policy resource (it is scoped to this function name)
 - Optional fixed alarm name: add `alarm_name="your-name"` in the `cloudwatch.Alarm(...)` definition
+
+## Re-enabling after the function sets its own reserved concurrency to 0
+
+After an alarm fires, the Lambda function requests a quota increase and then sets its own reserved concurrency to 0 so the next alarm firing requires a human decision. To re-enable it:
+
+```bash
+aws lambda delete-function-concurrency \
+  --function-name limit-increase-request-python-314
+```
+
+To check current state:
+
+```bash
+aws lambda get-function-concurrency \
+  --function-name limit-increase-request-python-314
+```
+
+`ReservedConcurrentExecutions: 0` means it cannot be invoked.
 
 ## Notes
 

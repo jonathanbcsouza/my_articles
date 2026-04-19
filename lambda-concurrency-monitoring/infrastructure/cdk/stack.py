@@ -11,6 +11,8 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+FUNCTION_NAME = "limit-increase-request-python-314"
+
 
 class LambdaConcurrencyMonitoringStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -25,7 +27,7 @@ class LambdaConcurrencyMonitoringStack(Stack):
         log_group = logs.LogGroup(
             self,
             "QuotaRequesterLogGroup",
-            log_group_name="/aws/lambda/limit-increase-request-python",
+            log_group_name=f"/aws/lambda/{FUNCTION_NAME}",
             retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.DESTROY,
         )
@@ -33,19 +35,20 @@ class LambdaConcurrencyMonitoringStack(Stack):
         quota_requester = lambda_.Function(
             self,
             "QuotaIncreaseRequester",
-            function_name="limit-increase-request-python",
-            runtime=lambda_.Runtime.PYTHON_3_12,
+            function_name=FUNCTION_NAME,
+            runtime=lambda_.Runtime.PYTHON_3_14,
             handler="handler.lambda_handler",
             code=lambda_.Code.from_asset("lambda"),
             timeout=Duration.seconds(30),
             memory_size=128,
             environment={
-                "INCREMENT": "500",
+                "INCREMENT_PERCENT": "0.10",
             },
             log_group=log_group,
             description=(
-                "Requests Lambda concurrency quota increase "
-                "when alarm transitions to ALARM"
+                "Requests Lambda concurrency quota increase when alarm "
+                "transitions to ALARM, then sets its own reserved "
+                "concurrency to 0 so the next alarm requires a human decision"
             ),
         )
 
@@ -58,6 +61,17 @@ class LambdaConcurrencyMonitoringStack(Stack):
                     "servicequotas:ListRequestedServiceQuotaChangeHistoryByQuota",
                 ],
                 resources=["*"],
+            )
+        )
+
+        quota_requester.add_to_role_policy(
+            iam.PolicyStatement(
+                sid="SelfThrottleViaReservedConcurrency",
+                effect=iam.Effect.ALLOW,
+                actions=["lambda:PutFunctionConcurrency"],
+                resources=[
+                    f"arn:aws:lambda:*:*:function:{FUNCTION_NAME}",
+                ],
             )
         )
 
