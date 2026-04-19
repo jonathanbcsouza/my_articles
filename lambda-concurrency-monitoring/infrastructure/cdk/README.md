@@ -59,5 +59,17 @@ aws lambda get-function-concurrency \
 
 ## Notes
 
+- The stack creates an **SNS topic** (`lambda-concurrency-alerts`) but does not add any subscriptions. After deploying, open the topic in the SNS console (or via CLI) and add a subscription — typically an email, or an AWS Chatbot integration for Slack. Until a subscription is added, the alarm will still invoke the Lambda but no one will be notified.
+
+  Example (email subscription):
+
+  ```bash
+  aws sns subscribe \
+    --topic-arn arn:aws:sns:<region>:<account-id>:lambda-concurrency-alerts \
+    --protocol email \
+    --notification-endpoint you@example.com
+  ```
+
+  You will receive a confirmation email; click the link to activate the subscription.
+
 - The stack uses `Maximum`, 1-minute period, and `1/1` datapoints to match the article.
-- If you want email notifications, add an SNS subscription after deploy (or extend this stack to add one).
