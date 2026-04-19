@@ -307,7 +307,6 @@ logger.setLevel(logging.INFO)
 SERVICE_CODE = "lambda"
 QUOTA_CODE = "L-B99A9384"  # Concurrent executions
 INCREMENT_PERCENT = float(os.environ.get("INCREMENT_PERCENT", "0.10"))
-MAX_LIMIT = float(os.environ.get("MAX_LIMIT", "5000"))
 
 quotas = boto3.client("service-quotas")
 lambda_client = boto3.client("lambda")
@@ -324,7 +323,7 @@ def has_pending_request():
     return False
 
 
-def disarm_self(function_name):
+def throttle_self(function_name):
     """Set this function's reserved concurrency to 0 so future alarm
     invocations are throttled by Lambda itself. Re-enable with:
         aws lambda delete-function-concurrency --function-name <name>
@@ -345,7 +344,7 @@ def lambda_handler(event, context):
 
     if has_pending_request():
         logger.info("Skipping: a quota increase request is already pending")
-        disarm_self(context.function_name)
+        throttle_self(context.function_name)
         return {"status": "SKIPPED", "reason": "pending request exists"}
 
     current = quotas.get_service_quota(
@@ -353,14 +352,9 @@ def lambda_handler(event, context):
     )
     current_value = current["Quota"]["Value"]
 
-    # Calculate proportional increase, rounded up, and cap at MAX_LIMIT
+    # Calculate proportional increase, rounded up
     increment = math.ceil(current_value * INCREMENT_PERCENT)
-    desired_value = min(current_value + increment, MAX_LIMIT)
-
-    if desired_value <= current_value:
-        logger.warning(f"At MAX_LIMIT={MAX_LIMIT}. Not requesting.")
-        disarm_self(context.function_name)
-        return {"status": "SKIPPED", "reason": "at max limit", "current": current_value}
+    desired_value = current_value + increment
 
     response = quotas.request_service_quota_increase(
         ServiceCode=SERVICE_CODE,
@@ -374,8 +368,8 @@ def lambda_handler(event, context):
         f"(+{increment}, {INCREMENT_PERCENT * 100:.0f}%) | Status: {status}"
     )
 
-    # One-shot safety net: disable so the next alarm requires a human decision
-    disarm_self(context.function_name)
+    # One-shot safety net: throttle so the next alarm requires a human decision
+    throttle_self(context.function_name)
 
     return {
         "current": current_value,
@@ -402,7 +396,7 @@ def lambda_handler(event, context):
       "Resource": "*"
     },
     {
-      "Sid": "SelfDisarmViaReservedConcurrency",
+      "Sid": "SelfThrottleViaReservedConcurrency",
       "Effect": "Allow",
       "Action": "lambda:PutFunctionConcurrency",
       "Resource": "arn:aws:lambda:*:*:function:limit-increase-request-python-314"
