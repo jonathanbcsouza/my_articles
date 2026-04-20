@@ -452,6 +452,15 @@ You can test the function by invoking it directly from the AWS Console. After yo
 
 That's it. When concurrency crosses 70%, the alarm fires, your team gets notified via SNS, the Lambda function requests a limit increase, and if not automatically approved, it opens a support case for quota review.
 
+## Deploy with CDK
+
+If you'd rather skip the console steps and deploy everything as code, there's a ready-to-use CDK project in two flavours:
+
+- **Python** → [`iac/cdk-python/`](./iac/cdk-python/)
+- **TypeScript** → [`iac/cdk-typescript/`](./iac/cdk-typescript/)
+
+Both produce the same stack (alarm, SNS topic, Lambda, IAM). Pick whichever language you prefer — see the README in each folder for deploy steps.
+
 ### References:
 
 - [Monitoring concurrency](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-concurrency.html)
