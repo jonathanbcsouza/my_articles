@@ -459,7 +459,7 @@ If you'd rather skip the console steps and deploy everything as code, there's a 
 - **Python** → [`iac/cdk-python/`](./iac/cdk-python/)
 - **TypeScript** → [`iac/cdk-typescript/`](./iac/cdk-typescript/)
 
-Both produce the same stack (alarm, SNS topic, Lambda, IAM). Pick whichever language you prefer — see the README in each folder for deploy steps.
+Both produce the same stack (alarm, SNS topic, Lambda, IAM). Pick whichever language you prefer. See the README in each folder for deploy steps.
 
 ### References:
 
