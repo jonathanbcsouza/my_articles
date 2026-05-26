@@ -1,137 +1,148 @@
-In this article we will explore how to use `ClaimedAccountConcurrency` to monitor concurrency in your region. I will also walk you through understanding this metric, how to set up a CloudWatch alarm step by step, SNS Topic and automate limit increase requests (proportionally to your account limit). This limit increase will be requested only once, and new requests will require human intervention.
+# AWS Lambda: Proactively Monitoring Concurrency with ClaimedAccountConcurrency
 
-![Hero image: AWS Lambda concurrency monitoring overview with ClaimedAccountConcurrency](./images/Diagram.drawio.png)
+![AWS Lambda concurrency monitoring overview with ClaimedAccountConcurrency](./images/Diagram.drawio.png)
 
+## What is AWS Lambda?
 
-Quick reminder:
+AWS Lambda is a compute service that runs your code in response to events (API requests, queue messages, file uploads) without requiring you to manage servers. It scales automatically as traffic increases.
 
-In Lambda, concurrency is the number of in-flight requests that your function is currently handling. There are two types of concurrency controls available: Reserved concurrency (RC) and Provisioned concurrency (PC). 
+## The problem
 
-Concurrency is the number of in-flight requests that your AWS Lambda function is handling at the same time. For each concurrent request, Lambda provisions a separate instance of your execution environment. 
+When you scale serverless architectures, observability gets noisy fast. Dozens of metrics, dashboards per function, alarms on individual errors. Then one night at 3am you get an alert: regional concurrency limit reached. Requests are being dropped across the entire account. Which metric should you have been watching? What could you have done before it got to this point?
 
-Execution environments are secure, isolated environments that run on hardware-virtualized virtual machines (MicroVMs). They manage the resources required to run your function and contain a runtime, a language-specific environment that relays event information and responses between Lambda and your specific function. In a nutshell, the execution environment manages the resources required to run your function.
+The answer is `ClaimedAccountConcurrency`: the one metric that reflects how much of your regional capacity is truly unavailable for new invocations. This guide shows you how to monitor it and set up an alarm that fires at 70% utilization, giving you time to react before throttling begins.
 
-Coming back to concurrency, for each concurrent request, Lambda provisions a separate instance of your execution environment. As your functions receive more requests, Lambda automatically handles scaling the number of execution environments until you reach your account's concurrency limit. By default, Lambda provides your account with a total concurrency limit of 1,000 concurrent executions across all functions in an AWS Region.
+**Topics:**
 
-> Note: New AWS accounts have reduced concurrency and memory quotas. AWS raises these quotas automatically based on your usage.
+1. How Lambda concurrency works (just enough to understand the metric choice)
+2. Why `ClaimedAccountConcurrency` is the right metric to monitor
+3. Setting up a CloudWatch alarm step by step
+4. Automating quota increases when the alarm fires
 
-For more information, please refer to [Understanding and visualizing concurrency](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#understanding-concurrency).
-
-
-## 1. Understanding the ClaimedAccountConcurrency
-
-For monitoring concurrency, Lambda exposes different metrics in CloudWatch:
-
-| Metric | What it measures |
-| :------------------------------- | :-------------------------------------------------------------- |
-| `ConcurrentExecutions` | The number of active concurrent invocations at a given point in time |
-| `UnreservedConcurrentExecutions` | Invocations using the remaining pool (does not consider reserved or provisioned concurrency) |
-| `ClaimedAccountConcurrency` | Total concurrency **unavailable** for new on-demand invocations |
-
-Notes:
-- `ConcurrentExecutions` reflects "The number of active concurrent invocations at a given point in time. Lambda emits this metric for all functions, versions, and aliases." It does not consider concurrency that's been **allocated** through reserved concurrency (RC) or provisioned concurrency (PC). 
-- `UnreservedConcurrentExecutions` represents the number of active concurrent invocations that are using unreserved concurrency (Lambda emits this metric across all functions in a region).
-
-"Ahhh, okay, if I want to monitor the regional limit, I must track the ConcurrentExecutions metric!"
-
-Well... partially correct. Monitoring these can help with planning distribution of your current limit across your region; however, for understanding the actual utilization in your region, we must focus on ClaimedAccountConcurrency instead.
-
-### Okay, so, what does ClaimedAccountConcurrency capture?
-
-```
-ClaimedAccountConcurrency = UnreservedConcurrentExecutions + Allocated Concurrency
-```
-
-We understand `UnreservedConcurrentExecutions`, but what about **Allocated concurrency**?
-
-Allocated Concurrency represents the sum of both:
-1. **Reserved concurrency (RC)**: ensures the function gets a guaranteed slice of the available pool for your region. Note that the account concurrency limit is 1,000 by default, and up to 900 of that can be reserved across functions (Lambda always keeps 100 units available for functions without RC). The function also cannot exceed that amount or use unreserved capacity. No other function can use it, even if the function is idle. This can be configured at the function level. It consumes your pool even when not in use.
-2. **Provisioned concurrency (PC)**: This allows you to have pre-initialized environments for individual functions. It counts against the pool even when the function is not processing requests.
-
-> **Note:** If a function has both RC and PC configured, Lambda counts only the RC (since RC should always be ≥ PC). PC is only counted separately for functions that don't have RC.
-
-If you want to run a quick test in `us-east-1`, set reserved concurrency to a high number (below your limit), invoke any function, then check the metrics below (allow a few seconds to propagate):
-
-```
-https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#metricsV2?graph=~(metrics~(~(~(expression~'SERVICE_QUOTA*28m1*29~label~'Current*20Concurrent*20Limit~id~'e1~period~60~yAxis~'left~color~'*239467bd))~(~'AWS*2fLambda~'ConcurrentExecutions~(id~'m1~yAxis~'left~label~'ConcurrentExecutionsMetric~visible~false))~(~'.~'UnreservedConcurrentExecutions~(id~'m3))~(~'.~'ClaimedAccountConcurrency~(id~'m2~yAxis~'left~color~'*23ff7f0e))~(~(expression~'*28m2*2fe1*29*20*2a*20100~label~'*25*20Claimed~id~'e2~period~60~yAxis~'left))~(~(expression~'e1*20-*20m2~label~'Available~id~'e5~period~60~yAxis~'left~color~'*232ca02c))~(~'AWS*2fLambda~'Invocations~(id~'m4~stat~'Sum)))~sparkline~false~view~'timeSeries~stacked~false~region~'us-east-1~period~60~stat~'Maximum~liveData~false~labels~(visible~true)~legend~(position~'bottom)~start~'-PT5M~end~'P0D)&query=~'*7bAWS*2fLambda*7d
-```
-
-## 2. Calculating The Regional Limit
-
-#### Scenario 1 - Account Concurrency Limit: 10
-
-Let's think about this example:
-
-| Configuration | Value |
-| :------------------------------- | :-------------------------------------------------------------- |
-| Account concurrency limit for your region | 10 |
-| Reserved concurrency (function A) | 3 |
-| Reserved concurrency (function B) | 3 |
-| Provisioned concurrency (function C, PC only — no RC) | 2 |
-| Active executions (unreserved concurrent executions for function D) | 1 |
-
-For the example above, `ClaimedAccountConcurrency` is equal to 9, and we only have 1 as our current capacity for this region. 
-
-![Scenario 1 breakdown: account limit 10, ClaimedAccountConcurrency = 9, only 1 unit of headroom left](./images/breakdown-scenario-1.svg)
-
-
-
-#### Scenario 2 - Account Concurrency Limit: 1,000
-
-| Configuration | Value |
-| :------------------------------------------------ | :----- |
-| Account concurrency limit | 1,000 |
-| Reserved concurrency (function A) | 400 |
-| Reserved concurrency (function B) | 400 |
-| Provisioned concurrency (function C, PC only — no RC) | 100 |
-| Active executions (unreserved concurrent executions across functions D, E, F) | 60 |
-
-In this example, since 60 active executions are being consumed across functions that do not have reserved or provisioned concurrency, the utilization should be 960. See calculation below:
-
-```
-ClaimedAccountConcurrency = UnreservedConcurrentExecutions + Allocated Concurrency
-ClaimedAccountConcurrency = 60 + allocated concurrency (400 + 400 + 100 = 900)
-```
-
-As per the above, only 60 on-demand invocations are running, but 900 additional units are allocated (claimed by RC/PC), giving a total `ClaimedAccountConcurrency` of **960**. Actual concurrency available for new on-demand invocations is **40**.
-
-![Scenario 2 breakdown (steady state): account limit 1,000, 60 unreserved executions + 900 allocated = 960 claimed, 40 available](./images/breakdown-scenario-2.svg)
-
-
-#### Scenario 3 - 150 Unreserved Concurrency Spike
-
-If any executions are running on _unreserved_ functions and `ClaimedAccountConcurrency` goes beyond the regional limit, you should expect throttling. 
-
-In this example, you have the Reserved concurrency for functions A, B, and C, and between functions D, E, and F you consume more than 60 concurrent environments (unreserved concurrency). Your total utilization is 960, hence available capacity is 40.
-
-However, in this case you have a new spike and other functions are being invoked concurrently. Let's call them functions G, H, and I. Between them, **150 new concurrent executions** happen (in addition to the 60 we had before). At that point in time, only **40** concurrent executions were available, so only **40** can run immediately. For the remaining **110** concurrent executions you should expect throttling, as the number of concurrent requests will now be above the regional limit. 
-
-Calculation:
--  available concurrency = your regional limit − ClaimedAccountConcurrency
--  1,000 − 960 = 40
-
-Now let's simulate an additional 150 unreserved concurrency:
--  150 (new spike of unreserved concurrency) − 40 (available concurrency)
-Result: 110 Throttles.
-
-![Scenario 3 breakdown (spike scenario): 150 concurrent requests arrive on unreserved functions, 40 run immediately and 110 are throttled](./images/breakdown-scenario-3.svg)
-
-
-You can see more examples from [Reserved concurrency diagram](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#understanding-concurrency:~:text=To%20better%20understand%20reserved%20concurrency%2C%20consider%20the%20following%20diagram%3A) and [Provisioned Concurrency + Reserved concurrency diagram](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#:~:text=The%20previous%20example,the%20following%20diagram%3A)
+**Note:** This guide uses the **AWS Console** intentionally. While Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, console-first instructions make the concepts easier to learn. Once you understand the mechanics, translating to IaC is straightforward. A CDK example ready for deployment is available in [`./infrastructure/cdk`](./infrastructure/cdk).
 
 ---
 
-## 3. What about creating an alarm?
+## How Lambda concurrency works
 
-> **Note:** While using Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, I am adding instructions via console first for learning purposes. The idea is to review the concepts first; translating to IaC will be straightforward.
+Before building the alarm, you need to understand how Lambda allocates capacity and where the limits come from.
 
-### Viewing the relevant metrics
+From [AWS documentation](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html):
 
-a. Go to **CloudWatch** → **All metrics**
+> **Concurrency is the number of in-flight requests that your AWS Lambda function is handling at the same time.**
 
-b. Click the **Source** tab
+Each execution environment handles one request at a time. If an environment is busy (during both the Init and Invoke phases), Lambda provisions another. When an environment finishes processing, it can serve the next request without re-initializing (warm start).
 
-c. Paste the following JSON:
+When multiple requests arrive simultaneously, Lambda spins up as many environments as needed. Draw a vertical line at any point in time and count the active environments. That number is your concurrency at that moment.
+
+![Lambda concurrency diagram showing multiple concurrent requests over time](./images/lambda-concurrency-diagram.png)
+
+In the diagram above, at the dashed green line there are **5 active environments**, so the concurrency at that moment is **5**. Requests 6 through 8 and 10 reuse environments that finished earlier (warm starts), while request 9 requires a new environment (cold start).
+
+### Concurrency is regional and shared
+
+Concurrency is **not per function**. All Lambda functions in an account share the same concurrency pool, scoped to a single AWS Region.
+
+By default, every account gets **1,000 concurrent executions per Region**. This is a soft limit you can increase via [Service Quotas](https://docs.aws.amazon.com/servicequotas/latest/userguide/request-quota-increase.html).
+
+Lambda also enforces a **requests per second** limit equal to 10x your concurrency limit (e.g. 10,000 RPS at 1,000 concurrency). You can be throttled by request rate even if concurrency is not maxed out.
+
+> **Good to know:** When your regional concurrency limit is hit, throttling affects **everything** using Lambda in that account and Region. Not just your API functions. SQS consumers, Kinesis stream pollers, DynamoDB Streams processors, EventBridge targets, scheduled jobs. Every team and every service relying on Lambda in that Region gets impacted simultaneously.
+
+---
+
+## Why ClaimedAccountConcurrency is the right metric
+
+Now that we know concurrency is shared and finite, the question becomes: which metric actually tells us how close we are to the limit?
+
+Lambda exposes three concurrency metrics in CloudWatch:
+
+| Metric                           | What it measures                                                |
+| -------------------------------- | --------------------------------------------------------------- |
+| `ConcurrentExecutions`           | Actively running invocations                                    |
+| `UnreservedConcurrentExecutions` | Invocations using the shared (unreserved) pool                  |
+| `ClaimedAccountConcurrency`      | Total concurrency **unavailable** for new on-demand invocations |
+
+Looking at these three metrics, the intuitive choice seems obvious: just track `ConcurrentExecutions` and you are done. Not quite.
+
+### Why ConcurrentExecutions is not enough
+
+`ConcurrentExecutions` only counts what is **actively running**. It ignores concurrency that has been **allocated** through reserved or provisioned concurrency. That allocated capacity is blocked from other functions even when idle, so the real available capacity is lower than `ConcurrentExecutions` suggests.
+
+### What ClaimedAccountConcurrency captures
+
+```
+ClaimedAccountConcurrency = UnreservedConcurrentExecutions + Allocated Concurrency
+```
+
+**Allocated concurrency** is the sum of:
+
+- **Reserved concurrency (RC)** across all functions in the Region. Reserved concurrency sets both a guaranteed minimum and a hard maximum for a function. The function gets a dedicated slice of the pool, but it cannot exceed that amount or use unreserved capacity. No other function can use it, even when idle. No additional charge.
+- **Provisioned concurrency (PC)** across functions that do **not** have reserved concurrency. Provisioned concurrency pre-initializes environments to eliminate cold starts. These environments count against the pool even when not processing requests. Incurs additional charges.
+
+> **Important:** If a function has **both** RC and PC, Lambda only counts RC toward allocated concurrency (since RC is always >= PC for a given function). This avoids double-counting. In the example below, each function uses one or the other, so the values simply add up.
+
+### Scenario 1: small account, almost full
+
+| Configuration                                              | Value |
+| ---------------------------------------------------------- | ----- |
+| Account concurrency limit                                  | 10    |
+| Reserved concurrency (function A)                          | 3     |
+| Reserved concurrency (function B)                          | 3     |
+| Provisioned concurrency (function C, no RC)                | 2     |
+| Active executions (unreserved, function D)                 | 1     |
+
+`ClaimedAccountConcurrency` = 1 (unreserved) + 8 (allocated: 3 + 3 + 2) = **9**. Only **1** unit of capacity remains for new invocations.
+
+![Scenario 1 breakdown: account limit 10, ClaimedAccountConcurrency = 9, only 1 unit of headroom left](./images/breakdown-scenario-1.svg)
+
+### Scenario 2: production account at steady state
+
+| Configuration                                              | Value |
+| ---------------------------------------------------------- | ----- |
+| Account concurrency limit                                  | 1,000 |
+| Reserved concurrency (function A)                          | 400   |
+| Reserved concurrency (function B)                          | 400   |
+| Provisioned concurrency (function C, no RC)                | 100   |
+| Active executions (unreserved, across functions D, E, F)   | 60    |
+
+```
+ClaimedAccountConcurrency = 60 (unreserved) + 900 (allocated: 400 + 400 + 100) = 960
+```
+
+Only 60 on-demand invocations are running, but 900 additional units are allocated. Total claimed is **960**. Available for new invocations: **40**.
+
+![Scenario 2 breakdown: account limit 1,000, 60 unreserved + 900 allocated = 960 claimed, 40 available](./images/breakdown-scenario-2.svg)
+
+### Scenario 3: traffic spike causes throttling
+
+Using the same account from Scenario 2, a sudden spike hits. Functions G, H, and I receive **150 new concurrent requests** on unreserved concurrency. At that point, only **40** units are available.
+
+```
+Available = Regional limit - ClaimedAccountConcurrency
+Available = 1,000 - 960 = 40
+
+Throttled = New requests - Available
+Throttled = 150 - 40 = 110
+```
+
+Only **40** of the 150 requests can run immediately. The remaining **110** are throttled (visible in the `Throttles` metric).
+
+![Scenario 3 breakdown: 150 concurrent requests arrive on unreserved functions, 40 run immediately and 110 are throttled](./images/breakdown-scenario-3.svg)
+
+This is why Lambda uses `ClaimedAccountConcurrency`, not `ConcurrentExecutions`, to determine whether capacity is available.
+
+---
+
+## Setting up the CloudWatch alarm
+
+With the right metric identified, let's wire it into a CloudWatch alarm that fires before throttling begins.
+
+### Step 1: Configure the metrics
+
+1. Go to **CloudWatch** → **All metrics**
+2. Click the **Source** tab
+3. Paste the following JSON:
 
 ```json
 {
@@ -197,61 +208,63 @@ c. Paste the following JSON:
 }
 ```
 
-d. Click **Update**
+4. Click **Update**
+
+#### What each metric does
+
+| ID   | Type       | Purpose                                                                        |
+| ---- | ---------- | ------------------------------------------------------------------------------ |
+| `m1` | Metric     | `ConcurrentExecutions`, used as input for `SERVICE_QUOTA()`. Hidden from graph |
+| `e1` | Expression | `SERVICE_QUOTA(m1)`, dynamically fetches your actual regional concurrency limit |
+| `m2` | Metric     | `ClaimedAccountConcurrency`, the metric we want to monitor                     |
+| `e2` | Expression | `(m2/e1) * 100`, utilization as a percentage                                   |
+| `e5` | Expression | `e1 - m2`, remaining available concurrency                                     |
+
+> **Why `SERVICE_QUOTA(m1)` instead of hardcoding 1,000?** The concurrency limit is a soft limit. If you request an increase, `SERVICE_QUOTA()` dynamically reflects your actual current limit. No need to update the alarm every time your quota changes.
+
+### Step 2: Verify the metrics
 
 After pasting the JSON and clicking **Update**, you should see the metrics table populated with all five entries. The table shows each metric's ID, label, details (source metric or expression), statistic, and period:
 
+![CloudWatch metrics console with pie chart view and metrics table showing m1, e1, m2, e2, and e5](./images/metrics-pie-chart-full.png)
 
-![CloudWatch metrics console - line chart view with all five entries (m1, e1, m2, e2, e5) and tooltip showing current values](./images/metrics-line-chart-full.png)
+In the **Pie** view, select only `ClaimedAccountConcurrency` and `Available` (checkboxes on the left) to get an instant visual of how much of your concurrency pool is claimed vs. free.
 
-| ID | Type | Purpose |
-| :---- | :---------- | :------------------------------------------------------------------------------------ |
-| `m1` | Metric | `ConcurrentExecutions` - used as input for `SERVICE_QUOTA()`. Hidden from the graph. |
-| `e1` | Expression | `SERVICE_QUOTA(m1)` - dynamically fetches your actual regional concurrency limit |
-| `m2` | Metric | `ClaimedAccountConcurrency` - the metric we want to monitor |
-| `e2` | Expression | `(m2/e1) * 100` - utilization as a percentage |
-| `e5` | Expression | `e1 - m2` - remaining available concurrency |
+Switch to the **Line** view and select all metrics to see the values over time. Hovering over the chart reveals the actual numbers at any point. Here, the tooltip shows a `Current Concurrent Limit` of 1,000, `Available` at 999, `ClaimedAccountConcurrency` at 1, and `% Claimed` at 0.1%:
 
-> **Why `SERVICE_QUOTA(m1)` instead of hardcoding 1,000?** The concurrency limit is a soft limit. If you've requested an increase, `SERVICE_QUOTA()` dynamically reflects your actual current limit for `ConcurrentExecutions`, so no need to update the alarm every time your quota changes.
+![CloudWatch metrics console with line chart view and tooltip showing current values](./images/metrics-line-chart-full.png)
 
-If you would like to explore a **Pie** view, select only `ClaimedAccountConcurrency` and `Available` (checkboxes on the left). Ensure to select the specific time period where you intend to reflect on the chart visualization.
+This confirms the metrics and expressions are working correctly before creating the alarm.
 
+### Step 3: Create the alarm
 
-![CloudWatch metrics console - pie chart view showing ClaimedAccountConcurrency vs Available with metrics table (m1, e1, m2, e2, e5)](./images/metrics-pie-chart-full.jpeg)
+1. Click the **bell icon** next to the `% Claimed` expression (`e2`)
+2. Configure the alarm condition:
 
-Once you have the above, this confirms you have the metrics and expressions that are relevant for monitoring this regional limit.
+| Setting                 | Value               | Why                                                     |
+| ----------------------- | ------------------- | ------------------------------------------------------- |
+| **Metric**              | `% Claimed` (e2)    | The utilization percentage we calculated                |
+| **Threshold type**      | Static              | Fixed threshold value                                   |
+| **Condition**           | Greater than **70** | 70% gives headroom before hitting the limit             |
+| **Period**              | 1 minute            | Matches Lambda's metric emission granularity            |
+| **Statistic**           | Maximum             | Catches spikes (average would smooth them out)          |
+| **Datapoints to alarm** | 1 out of 1          | Triggers on the first breach                            |
 
-## 4. Creating the alarm
-
-a. From CloudWatch metrics, click the **bell icon** next to the `% Claimed` expression (`e2`)
-
-b. Configure the alarm condition:
-
-| Setting | Value | Why |
-| :----------------------- | :------------------- | :---------------------------------------------- |
-| **Metric** | `% Claimed` (e2) | The utilization percentage we calculated |
-| **Threshold type** | Static | Fixed threshold value |
-| **Condition** | Greater than **70** | 70% gives headroom before hitting the limit |
-| **Period** | 1 minute | Matches Lambda's metric emission granularity |
-| **Statistic** | Maximum | Catches spikes - average would smooth them out |
-| **Datapoints to alarm** | 1 out of 1 | Triggers on the first breach |
-
-### Configure actions
+### Step 4: Configure actions
 
 Configure an **SNS topic** as the notification target. This can deliver alerts via:
 
 - Email
 - Slack (via AWS Chatbot or a Lambda-backed integration)
-- Others
+- PagerDuty, Opsgenie, or any HTTP endpoint
 
-### Name the alarm
+### Step 5: Name the alarm
 
 Give the alarm a descriptive name and optionally add a Markdown description (rendered in the CloudWatch console):
 
+![CloudWatch alarm details showing name and description setup](./images/alarm-details-setup.png)
 
-![CloudWatch alarm details - name and Markdown description setup](./images/alarm-details-setup.png)
-
-### Review and create
+### Step 6: Review and create
 
 Review the configuration and click **Create alarm**.
 
@@ -263,80 +276,56 @@ Once active, the alarm graph shows your utilization over time:
 - **Threshold** → 70%
 - The alarm bar at the bottom transitions from **OK** (green) to **In alarm** (red) when the threshold is breached
 
-![CloudWatch alarm graph - % Claimed metric crossing the 70% threshold, alarm bar transitioning from OK to In alarm](./images/alarm-graph-threshold-70.png)
+![CloudWatch alarm graph showing % Claimed with threshold greater than 70](./images/alarm-graph-threshold-70.png)
 
 ---
 
-## 5. Extra: automate limit increases
+## Going further: automate limit increases
 
-Instead of just alerting, you can add a Lambda function as a **direct alarm action** that automatically submits a Service Quotas increase request. The alarm triggers two independent actions:
+The alarm tells you there is a problem. The next step is fixing it automatically.
+
+Instead of only alerting, you can add a Lambda function as a **direct alarm action** that automatically submits a Service Quotas increase request. The alarm triggers two independent actions:
 
 - **SNS** → notifies your team (email, Slack)
 - **Lambda** → requests a concurrency limit increase
 
-### The trade-off, and how this solution handles it
+```mermaid
+flowchart LR
+    CWAlarm["CloudWatch Alarm"] -->|"ALARM state"| SNS["SNS Topic"]
+    CWAlarm -->|"ALARM state"| Lambda["Lambda Function"]
+    SNS -->|"email / Slack"| Team["Team"]
+    Lambda -->|"request_service_quota_increase()"| SQ["Service Quotas API"]
+```
 
-Fully automating limit increases can generate extra cost, since it would keep driving your limit higher on every alarm transition.
+> **How often does the Lambda fire?** CloudWatch Alarm actions trigger on **state transitions**, not continuously. The function is invoked **once** when the alarm transitions from `OK` to `In alarm`. It will not fire again while the alarm stays in `ALARM` state. If the alarm recovers to `OK` and then breaches again, it fires once more. This is why the function includes an idempotency check to skip duplicate requests.
 
-To ensure a mitigation for a temporary pain, without creating additional headaches (if a limit increase is not desired), this solution aims to create a function that runs one time only. Here is the idea:
-
-1. The Lambda requests **one** bounded limit increase (current limit +10%).
-2. Immediately after, the function **sets its own reserved concurrency to 0**. From Lambda's perspective this function is now un-invokable, so any future alarm action call is throttled for this specific function. Therefore, no new limit increases will be submitted.
-3. SNS still keeps notifying the team on every alarm transition, so humans are always in the loop. However, the proportional first limit increase was applied or is in progress (if not automatically approved via Service Quotas).
-4. A human review remains mandatory.
-
-> If you prefer zero automation, just skip the Lambda action and keep only SNS. The rest of this section assumes you want the bounded safety net.
+> **Important caveat:** Quota increases are not instant. AWS reviews and approves them manually, which can take hours or days. This automation gets the request submitted immediately, but it does not provide more capacity right away. Treat it as a proactive request mechanism, not a real-time scaling solution.
 
 ### The Lambda function
 
-a. Create a new Lambda function with the **Python 3.14** runtime. Once this function is triggered, it will check for any pending quota increase requests and submit a new one if none exist. The requested value is proportional to the current limit; the request will be for a proportional value of 10% of the current limit. You can change the percentage via `INCREMENT_PERCENT`.
-
-After a successful request, the function **disables itself by setting its own reserved concurrency to 0**. This turns the function into a one-shot safety net: the next alarm firing will not trigger another auto-increase until a human re-enables it. This is a deliberate pattern to avoid runaway auto-increases compounding cost or masking over-allocated reserved/provisioned concurrency.
-
-> **How often will this Lambda get triggered?** CloudWatch Alarm actions trigger on **state transitions**, not continuously. The function is invoked **once** when the alarm transitions from `OK` to `In alarm`. It won't invoke again while the alarm stays in `ALARM` state. If the alarm recovers to `OK` and then breaches again, it invokes once more. Hence the solution with RC=0.
+Create a new Lambda function with the **Python 3.13** runtime. This function receives the alarm event directly, checks for any pending quota increase requests, and submits a new one if none exist:
 
 ```python
-import os
 import boto3
 import logging
-import math
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 SERVICE_CODE = "lambda"
 QUOTA_CODE = "L-B99A9384"  # Concurrent executions
-INCREMENT_PERCENT = float(os.environ.get("INCREMENT_PERCENT", "0.10"))
+INCREMENT = 500
 
-quotas = boto3.client("service-quotas")
-lambda_client = boto3.client("lambda")
-
+client = boto3.client("service-quotas")
 
 def has_pending_request():
-    paginator = quotas.get_paginator(
-        "list_requested_service_quota_change_history_by_quota"
+    history = client.list_requested_service_quota_change_history_by_quota(
+        ServiceCode=SERVICE_CODE, QuotaCode=QUOTA_CODE
     )
-    for page in paginator.paginate(ServiceCode=SERVICE_CODE, QuotaCode=QUOTA_CODE):
-        for r in page.get("RequestedQuotas", []):
-            if r["Status"] in ("PENDING", "CASE_OPENED"):
-                return True
-    return False
-
-
-def throttle_self(function_name):
-    """Set this function's reserved concurrency to 0 so future alarm
-    invocations are throttled by Lambda itself. Re-enable with:
-        aws lambda delete-function-concurrency --function-name <name>
-    """
-    lambda_client.put_function_concurrency(
-        FunctionName=function_name,
-        ReservedConcurrentExecutions=0,
+    return any(
+        r["Status"] in ("PENDING", "CASE_OPENED")
+        for r in history.get("RequestedQuotas", [])
     )
-    logger.warning(
-        f"Auto-increase DISABLED: set {function_name} RC=0. "
-        f"A human must re-enable the function to allow future auto-increases."
-    )
-
 
 def lambda_handler(event, context):
     alarm_name = event.get("alarmData", {}).get("alarmName", "unknown")
@@ -344,19 +333,15 @@ def lambda_handler(event, context):
 
     if has_pending_request():
         logger.info("Skipping: a quota increase request is already pending")
-        throttle_self(context.function_name)
         return {"status": "SKIPPED", "reason": "pending request exists"}
 
-    current = quotas.get_service_quota(
+    current = client.get_service_quota(
         ServiceCode=SERVICE_CODE, QuotaCode=QUOTA_CODE
     )
     current_value = current["Quota"]["Value"]
+    desired_value = current_value + INCREMENT
 
-    # Calculate proportional increase, rounded up
-    increment = math.ceil(current_value * INCREMENT_PERCENT)
-    desired_value = current_value + increment
-
-    response = quotas.request_service_quota_increase(
+    response = client.request_service_quota_increase(
         ServiceCode=SERVICE_CODE,
         QuotaCode=QUOTA_CODE,
         DesiredValue=desired_value,
@@ -364,23 +349,28 @@ def lambda_handler(event, context):
 
     status = response["RequestedQuota"]["Status"]
     logger.info(
-        f"Requested increase: {current_value} -> {desired_value} "
-        f"(+{increment}, {INCREMENT_PERCENT * 100:.0f}%) | Status: {status}"
+        f"Requested increase: {current_value} -> {desired_value} | Status: {status}"
     )
-
-    # One-shot safety net: throttle so the next alarm requires a human decision
-    throttle_self(context.function_name)
 
     return {
         "current": current_value,
         "desired": desired_value,
-        "increment": increment,
-        "increment_percent": INCREMENT_PERCENT * 100,
         "status": status,
     }
 ```
 
-### IAM permissions - Execution Role
+Key points about this function:
+
+- `L-B99A9384` is the quota code for Lambda concurrent executions
+- `INCREMENT = 500` adds 500 units on each trigger. Adjust this to your needs
+- `has_pending_request()` prevents duplicate submissions if the alarm oscillates between OK and ALARM before a previous request is approved
+- `SERVICE_QUOTA()` in CloudWatch dynamically reflects the new limit after approval, so the alarm threshold adjusts automatically
+- The event comes directly from the CloudWatch Alarm action (not via SNS), so the alarm name is at `event["alarmData"]["alarmName"]`
+- No external dependencies. `boto3` is included in the Lambda runtime
+
+### IAM permissions
+
+Attach a policy to the function's execution role with the minimum required permissions:
 
 ```json
 {
@@ -396,12 +386,6 @@ def lambda_handler(event, context):
       "Resource": "*"
     },
     {
-      "Sid": "SelfThrottleViaReservedConcurrency",
-      "Effect": "Allow",
-      "Action": "lambda:PutFunctionConcurrency",
-      "Resource": "arn:aws:lambda:*:*:function:limit-increase-request-python-314"
-    },
-    {
       "Effect": "Allow",
       "Action": "iam:CreateServiceLinkedRole",
       "Resource": "arn:aws:iam::*:role/aws-service-role/servicequotas.amazonaws.com/*",
@@ -415,53 +399,55 @@ def lambda_handler(event, context):
 }
 ```
 
-> The `lambda:PutFunctionConcurrency` resource ARN is scoped to this function only, so it cannot disable or throttle any other function.
+### Wiring it up in the console
 
-### Re-enabling the function
+1. **Create the function:** Go to **Lambda** → **Create function** → Author from scratch. Name it (e.g. `limit-increase-request`), select **Python 3.13** as the runtime, and paste the code above.
 
-After investigating, you can re-enable it to be invoked:
+2. **Attach the IAM policy:** Go to the function's **Configuration** → **Permissions** → click the execution role → **Add permissions** → **Create inline policy** → paste the JSON above.
 
-```bash
-aws lambda delete-function-concurrency \
-  --function-name limit-increase-request-python-314
-```
-
-To check current state:
+3. **Grant CloudWatch permission to invoke the function.** CloudWatch Alarms use a specific service principal and need explicit permission on the Lambda function. Run:
 
 ```bash
-aws lambda get-function-concurrency \
-  --function-name limit-increase-request-python-314
+aws lambda add-permission \
+  --function-name "limit-increase-request" \
+  --statement-id "AllowCloudWatchAlarmInvoke" \
+  --action "lambda:InvokeFunction" \
+  --principal "lambda.alarms.cloudwatch.amazonaws.com" \
+  --source-arn "arn:aws:cloudwatch:<REGION>:<ACCOUNT_ID>:alarm:<ALARM_NAME>"
 ```
 
-`ReservedConcurrentExecutions: 0` means it cannot be invoked.
+Replace `<REGION>`, `<ACCOUNT_ID>`, and `<ALARM_NAME>` with your values. Without this, CloudWatch will silently fail to invoke the function.
 
-b. **Add the Lambda alarm action:** Go back to your CloudWatch alarm → **Edit** → **Configure actions** → **Add Lambda action**. Select **In alarm** as the trigger state and choose your function:
+4. **Add the Lambda alarm action:** Go back to your CloudWatch alarm → **Edit** → **Configure actions** → **Add Lambda action**. Select **In alarm** as the trigger state and choose your function:
 
-![CloudWatch alarm configuration - adding a Lambda action triggered on the In alarm state](./images/alarm-lambda-action.png)
+![CloudWatch alarm showing a Lambda action triggered on In alarm state](./images/alarm-lambda-action.png)
 
 The SNS action you configured in Step 4 stays as-is for notifications. The Lambda action runs independently alongside it.
 
-c. Verify the quota request and support case
+### Verify the quota request and support case
 
-You can test the function by invoking it directly from the AWS Console. After you invoke it, go to **Service Quotas** → **Recent quota increase requests** and confirm if the limit increase request was sent/approved or a new Support Case was created.
+After a successful invocation, go to **Service Quotas** → **Recent quota increase requests** and confirm a new request appears for **AWS Lambda / Concurrent executions** with a status like **Case Opened**:
 
-![Service Quotas console - recent quota increase requests showing a newly opened AWS Lambda Concurrent executions case](./images/service-quotas-request-list.png)
+![Service Quotas showing recent quota increase requests with Lambda concurrent executions case opened](./images/service-quotas-request-list.png)
 
-![AWS Support case details page for the Lambda concurrent-executions quota increase request (subject, status, category, creation time)](./images/service-quotas-case-details.png)
+Click the support case ID to open the case details page and confirm the request metadata (subject, status, category, and creation time):
 
+![AWS Support case details for Lambda quota increase request](./images/service-quotas-case-details.png)
 
-That's it. When concurrency crosses 70%, the alarm fires, your team gets notified via SNS, the Lambda function requests a limit increase, and if not automatically approved, it opens a support case for quota review.
+That covers the full setup. When concurrency crosses 70%, the alarm fires. Your team gets notified via SNS. The Lambda function requests a limit increase. AWS opens a support case for quota review. Monitoring becomes proactive instead of reactive.
 
-## Deploy with CDK
+---
 
-If you'd rather skip the console steps and deploy everything as code, there's a ready-to-use CDK project in two flavours:
+## Key takeaways
 
-- **Python** → [`iac/cdk-python/`](./iac/cdk-python/)
-- **TypeScript** → [`iac/cdk-typescript/`](./iac/cdk-typescript/)
+- **Concurrency** = number of execution environments active at the same time
+- Concurrency is **regional** and **shared** across all functions in the same account and region
+- `ConcurrentExecutions` only shows active invocations. It misses reserved and provisioned capacity
+- `ClaimedAccountConcurrency` reflects **real capacity usage**, which is what Lambda uses to determine availability
+- `SERVICE_QUOTA()` dynamically fetches your actual limit. Do not hardcode it
+- Set alarms at **70%** to give yourself time to react before throttling
+- Quota increases are not instant. Combine the automated request with alerting so your team can also take manual action if needed
 
-Both produce the same stack (alarm, SNS topic, Lambda, IAM). Pick whichever language you prefer. See the README in each folder for deploy steps.
+---
 
-### References:
-
-- [Monitoring concurrency](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-concurrency.html)
-- [Understanding and visualizing concurrency](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#understanding-concurrency)
+_References: [AWS Lambda: Understanding function scaling](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html) · [Monitoring concurrency](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-concurrency.html)_
