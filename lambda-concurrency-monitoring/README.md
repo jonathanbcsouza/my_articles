@@ -19,6 +19,16 @@ The answer is `ClaimedAccountConcurrency`: the one metric that reflects how much
 3. Setting up a CloudWatch alarm step by step
 4. Automating quota increases when the alarm fires
 
+**Important considerations before you start:**
+
+This guide includes an automated quota increase considering **organic traffic growth**. Examples where increasing the limit will not help:
+
+- **Runaway error loops.** An erroring function. Raising the limit just gives it more room to fail. When the alarm fires, always check whether the consumer is healthy before requesting more capacity. If it is broken, cap it with reserved concurrency instead.
+
+- **Async invocation silent delays.** Synchronous invocations get throttled visibly. Asynchronous invocations (CloudFormation custom resources, S3 triggers, EventBridge) are queued for up to 6 hours. For these, check `AsyncEventAge` and set `MaximumEventAgeInSeconds` for critical async functions.
+
+For functions that must never be delayed, set a small reserved concurrency (e.g. 5) as a permanent guardrail regardless of monitoring. Reserved concurrency guarantees dedicated capacity that no other function can consume.
+
 **Note:** This guide uses the **AWS Console** intentionally. While Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, console-first instructions make the concepts easier to learn. Once you understand the mechanics, translating to IaC is straightforward. A CDK example ready for deployment is available in [`./infrastructure/cdk`](./infrastructure/cdk).
 
 ---
