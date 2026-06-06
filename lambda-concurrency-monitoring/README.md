@@ -35,7 +35,7 @@ Automated increases only make sense for organic growth where the consumer is hea
 
 - **Async invocations.** Synchronous invocations get throttled visibly. However, asynchronous invocations (CloudFormation custom resources, S3 triggers, EventBridge) are queued for up to 6 hours. For these, check `AsyncEventAge` and review the `MaximumEventAgeInSeconds` for critical async functions.
 
-**Note:** This guide uses the **AWS Console** intentionally. While Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, console-first instructions make the concepts easier to learn. Once you understand the mechanics, translating to IaC is straightforward. A CDK example ready for deployment is available in [`./infrastructure/cdk`](./infrastructure/cdk).
+**Note:** This guide uses the **AWS Console** intentionally. While Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, console-first instructions make the concepts easier to learn. Once you understand the mechanics, translating to IaC is straightforward. A CDK example ready for deployment is available [`here`](./iac).
 
 ---
 
@@ -468,7 +468,7 @@ def lambda_handler(event, context):
       "Sid": "SelfDisarmViaReservedConcurrency",
       "Effect": "Allow",
       "Action": "lambda:PutFunctionConcurrency",
-      "Resource": "arn:aws:lambda:*:*:function:limit-increase-request-python-314"
+      "Resource": "arn:aws:lambda:region:account-id:function:limit-increase-request"
     },
     {
       "Effect": "Allow",

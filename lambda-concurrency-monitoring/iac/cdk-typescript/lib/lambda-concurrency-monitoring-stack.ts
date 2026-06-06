@@ -9,7 +9,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 
-const FUNCTION_NAME = 'limit-increase-request-python-314';
+const FUNCTION_NAME = 'limit-increase-request';
 const TOPIC_NAME = 'lambda-concurrency-alerts';
 const ALARM_THRESHOLD_PERCENT = 70;
 

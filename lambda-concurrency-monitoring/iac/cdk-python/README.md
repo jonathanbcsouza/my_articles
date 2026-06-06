@@ -4,7 +4,7 @@ This CDK project creates the full monitoring and automation stack:
 
 - CloudWatch metric math alarm based on `% Claimed = (ClaimedAccountConcurrency / SERVICE_QUOTA(ConcurrentExecutions)) * 100`
 - SNS topic for notifications
-- Lambda function (**Python 3.14**, named `limit-increase-request-python-314`) that requests a bounded Lambda concurrency quota increase, then sets its own reserved concurrency to 0 so the next alarm firing requires a human decision
+- Lambda function (**Python 3.14**, named `limit-increase-request`) that requests a bounded Lambda concurrency quota increase, then sets its own reserved concurrency to 0 so the next alarm firing requires a human decision
 - IAM permissions required by the Lambda function (including scoped `lambda:PutFunctionConcurrency` so the function can set its own reserved concurrency)
 - Lambda invoke permission for CloudWatch alarm actions
 
@@ -41,18 +41,18 @@ cdk deploy
 
 ## Re-enabling after the function sets its own reserved concurrency to 0
 
-After an alarm fires, the Lambda function requests a quota increase and then sets its own reserved concurrency to 0 so the next alarm firing requires a human decision. To re-enable it:
+After an alarm fires, the Lambda function requests a quota increase and then sets its own reserved concurrency to 0 so the next alarm firing requires a human decision. You can re-enable it via [AWS console](https://docs.aws.amazon.com/lambda/latest/dg/configuration-concurrency.html#configuring-concurrency-reserved), or via CLI:
 
 ```bash
 aws lambda delete-function-concurrency \
-  --function-name limit-increase-request-python-314
+  --function-name limit-increase-request
 ```
 
 To check current state:
 
 ```bash
 aws lambda get-function-concurrency \
-  --function-name limit-increase-request-python-314
+  --function-name limit-increase-request
 ```
 
 `ReservedConcurrentExecutions: 0` means it cannot be invoked.

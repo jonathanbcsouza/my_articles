@@ -11,7 +11,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
-FUNCTION_NAME = "limit-increase-request-python-314"
+FUNCTION_NAME = "limit-increase-request"
 
 
 class LambdaConcurrencyMonitoringStack(Stack):
