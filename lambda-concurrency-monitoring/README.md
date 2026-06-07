@@ -12,6 +12,8 @@ When you scale serverless architectures, observability can be a challenge. Many 
 
 In this article I will explain what the regional concurrency limit means, how to monitor it, and how it translates to the current capacity you have for your AWS Region.
 
+> **Recommended:** See [concurrency dashboard CDK project](./dashboard-project) that is ready for dpeloyment. It visualizes regional capacity, per-function usage, and a reclaim -> cap -> increase decision guide, so you can decide before changing anything. The sections below explain the concepts behind it. Otherwise, if your growth is healthy and organic, you can then also look at the [automated limit increase solution](./iac).
+
 **Topics:**
 
 1. How Lambda concurrency works (just enough to understand the metric choice)
@@ -326,11 +328,23 @@ Once active, the alarm graph shows your utilization over time:
 
 ---
 
-## CDK Solution
+## Deploy as code (CDK)
 
-If you'd rather skip the console steps and deploy everything as code, see the [`iac/`](./iac) folder (available in TypeScript and Python). See the README in each folder for deploy steps.
+Prefer code over the console? Everything in this article is available as standalone CDK apps.
 
-> **Looking for automated limit increases?** The CDK solution also includes an optional Lambda function that automatically requests a quota increase when the alarm fires. This should be assessed carefully as it relies on healthy, legitimate traffic growth. See [`iac/README.md`](./iac/README.md) for full details, trade-offs, and considerations.
+### The main solution: the concurrency dashboard
+
+Start here. The [`dashboard-project/`](./dashboard-project) deploys an interactive CloudWatch dashboard: regional capacity, per-function consumption, a live reserved/provisioned concurrency table, and a reclaim -> cap -> increase decision guide. It gives you the data to decide before changing anything, which is exactly the "investigate first" approach this article recommends.
+
+![Lambda concurrency dashboard](./dashboard-project/images/lambda-concurrency-dashboard.png)
+
+### Add an alarm to get notified
+
+The [`iac/`](./iac) folder (TypeScript and Python) deploys the `% Claimed` alarm from this article, wired to SNS so your team is notified at 70%.
+
+### If traffic is healthy: automate the limit increase
+
+Once you have used the dashboard to confirm the growth is healthy and organic (not a retry storm or bad actor), you can also use the automated limit increase solution. `iac/` includes an optional Lambda that requests a quota increase when the alarm fires, then disables itself (sets its own reserved concurrency to 0) so the next breach needs a human. Use it only for traffic you have already confirmed is legitimate, since it can otherwise give a failing function more room to fail. See [`iac/README.md`](./iac/README.md) for trade-offs.
 
 ### References:
 
