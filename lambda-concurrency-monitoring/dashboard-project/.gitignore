@@ -1,0 +1,17 @@
+# Node / CDK
+node_modules/
+cdk.out/
+.cdk.staging/
+
+# Compiled TypeScript (we run via ts-node)
+*.js
+!jest.config.js
+*.d.ts
+
+# Python (Lambda handler) build artifacts
+__pycache__/
+*.py[cod]
+
+# Env / local
+.env
+.DS_Store
