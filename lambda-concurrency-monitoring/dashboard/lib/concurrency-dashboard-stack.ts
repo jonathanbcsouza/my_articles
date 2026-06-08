@@ -2,14 +2,27 @@ import * as path from 'path';
 import { Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 
 const DASHBOARD_NAME = 'lambda-concurrency';
 const WIDGET_FUNCTION_NAME = 'concurrency-dashboard-widget';
+const TOPIC_NAME = 'lambda-concurrency-alerts';
+const ALARM_NAME = 'lambda-concurrency-claimed-pct-70';
 const ALARM_THRESHOLD_PERCENT = 70;
 const FULL_WIDTH = 24;
+
+export interface ConcurrencyDashboardStackProps extends StackProps {
+  /**
+   * Optional email to auto-subscribe to the SNS alarm topic. If omitted, the
+   * topic is created without subscriptions and you add them manually.
+   */
+  readonly alertEmail?: string;
+}
 
 /** Pie chart with segment labels always visible (CDK GraphWidget lacks labels prop). */
 class LabeledPieWidget extends cloudwatch.GraphWidget {
@@ -20,8 +33,48 @@ class LabeledPieWidget extends cloudwatch.GraphWidget {
   }
 }
 
+/**
+ * SEARCH expression per function — legend shows clean FunctionName values
+ * (Metrics Insights prefixes labels with "1 - " or the raw SQL string).
+ */
+class SearchByFunction extends cloudwatch.MathExpression {
+  constructor(metricName: string, stat: string, period: Duration) {
+    super({
+      expression:
+        `SEARCH('{AWS/Lambda,FunctionName} MetricName="${metricName}"', ` +
+        `'${stat}', ${period.toSeconds()})`,
+      usingMetrics: {},
+      period,
+    });
+  }
+}
+
+/**
+ * Graph widget for SEARCH expressions. CDK nests metrics as entry.value[] and
+ * defaults label to the full expression string; set label to '' so the legend
+ * shows only the FunctionName from each series.
+ */
+class SearchGraphWidget extends cloudwatch.GraphWidget {
+  public override toJson(): any[] {
+    const json = super.toJson();
+    const metrics = json[0]?.properties?.metrics;
+    if (Array.isArray(metrics)) {
+      for (const entry of metrics) {
+        const value = entry?.value;
+        if (!Array.isArray(value)) continue;
+        for (const part of value) {
+          if (part && typeof part === 'object' && 'expression' in part) {
+            part.label = '';
+          }
+        }
+      }
+    }
+    return json;
+  }
+}
+
 export class ConcurrencyDashboardStack extends Stack {
-  constructor(scope: Construct, id: string, props: StackProps = {}) {
+  constructor(scope: Construct, id: string, props: ConcurrencyDashboardStackProps = {}) {
     super(scope, id, props);
 
     // --- Custom-widget Lambda (renders the live RC + PC table) ---
@@ -55,6 +108,7 @@ export class ConcurrencyDashboardStack extends Stack {
           'lambda:ListProvisionedConcurrencyConfigs',
           'lambda:GetAccountSettings',
           'cloudwatch:GetMetricData',
+          'cloudwatch:DescribeAlarms',
         ],
         resources: ['*'],
       }),
@@ -131,6 +185,48 @@ export class ConcurrencyDashboardStack extends Stack {
       label: 'Available',
     });
 
+    // --- Alarm: % Claimed > 70%, notify via SNS only (no Lambda action) ---
+    const alarmTopic = new sns.Topic(this, 'ConcurrencyAlarmTopic', {
+      topicName: TOPIC_NAME,
+    });
+
+    if (props.alertEmail) {
+      alarmTopic.addSubscription(new snsSubscriptions.EmailSubscription(props.alertEmail));
+    }
+
+    const dashboardUrl =
+      `https://${this.region}.console.aws.amazon.com/cloudwatch/home` +
+      `?region=${this.region}#dashboards/dashboard/${DASHBOARD_NAME}`;
+
+    const alarmUrl =
+      `https://${this.region}.console.aws.amazon.com/cloudwatch/home` +
+      `?region=${this.region}#alarmsV2:alarm/${encodeURIComponent(ALARM_NAME)}`;
+
+    const claimedAlarm = new cloudwatch.Alarm(this, 'ClaimedConcurrencyUtilizationAlarm', {
+      alarmName: ALARM_NAME,
+      metric: percentClaimed,
+      threshold: ALARM_THRESHOLD_PERCENT,
+      evaluationPeriods: 1,
+      datapointsToAlarm: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      alarmDescription: [
+        'Lambda regional concurrency claimed has exceeded 70% of the account limit.',
+        '',
+        'ClaimedAccountConcurrency = allocated RC/PC + unreserved executions in use.',
+        'New on-demand invocations may throttle soon if usage keeps climbing.',
+        '',
+        'What to do:',
+        '1. Open the concurrency dashboard and identify top consumers / wasted RC.',
+        '2. Reclaim → cap → increase (do not raise the limit during a retry storm).',
+        '',
+        `Dashboard: ${dashboardUrl}`,
+        `Alarm: ${alarmUrl}`,
+      ].join('\n'),
+    });
+
+    // Notification only - this dashboard intentionally takes no automated action.
+    claimedAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+
     const unreserved = new cloudwatch.Metric({
       namespace: 'AWS/Lambda',
       metricName: 'UnreservedConcurrentExecutions',
@@ -139,22 +235,8 @@ export class ConcurrencyDashboardStack extends Stack {
       label: 'UnreservedConcurrentExecutions',
     });
 
-    // Helper: a per-function top-N Metrics Insights expression. Without an
-    // explicit GROUP BY these per-function metrics would be aggregated across
-    // the whole Region, which is misleading (a utilization ratio especially).
-    const topNByFunction = (
-      stat: string,
-      metricName: string,
-      limit = 10,
-    ): cloudwatch.MathExpression =>
-      new cloudwatch.MathExpression({
-        expression:
-          `SELECT ${stat}(${metricName}) FROM SCHEMA("AWS/Lambda", FunctionName) ` +
-          `GROUP BY FunctionName ORDER BY ${stat}() DESC LIMIT ${limit}`,
-        usingMetrics: {},
-        period,
-        label: '',
-      });
+    const searchByFunction = (stat: string, metricName: string): SearchByFunction =>
+      new SearchByFunction(metricName, stat, period);
 
     // --- Dashboard ---
     const dashboard = new cloudwatch.Dashboard(this, 'ConcurrencyDashboard', {
@@ -162,19 +244,29 @@ export class ConcurrencyDashboardStack extends Stack {
       defaultInterval: Duration.hours(3),
     });
 
-    // Row 1 - Regional capacity (the headline)
+    // Row 1 - Regional capacity headline: alarm ON/OFF, utilization, split, trend
     dashboard.addWidgets(
+      new cloudwatch.CustomWidget({
+        functionArn: widgetFn.functionArn,
+        title: 'Alarm state',
+        params: { action: 'alarm_state', alarmName: ALARM_NAME },
+        width: 4,
+        height: 6,
+        updateOnRefresh: true,
+        updateOnResize: true,
+        updateOnTimeRangeChange: false,
+      }),
       new cloudwatch.SingleValueWidget({
         title: '% Claimed (utilization)',
         metrics: [percentClaimed],
-        width: 6,
+        width: 4,
         height: 6,
       }),
       new LabeledPieWidget({
         title: 'Claimed vs Available',
         left: [claimed, available],
         view: cloudwatch.GraphWidgetView.PIE,
-        width: 8,
+        width: 6,
         height: 6,
       }),
       new cloudwatch.GraphWidget({
@@ -190,94 +282,109 @@ export class ConcurrencyDashboardStack extends Stack {
       }),
     );
 
-    // Row 2 - Consumption (who is using the pool)
+    // Row 2 - Alarm graph + top consumers
     dashboard.addWidgets(
-      new cloudwatch.GraphWidget({
-        title: 'Unreserved (shared pool) in use',
-        left: [unreserved],
+      new cloudwatch.AlarmWidget({
+        title: 'ClaimedAccountConcurrency % alarm',
+        alarm: claimedAlarm,
+        leftYAxis: { min: 0, max: 100, label: '% Claimed', showUnits: false },
         width: 12,
         height: 6,
       }),
-      new cloudwatch.GraphWidget({
-        title: 'Top 10 consumers (over time)',
-        left: [topNByFunction('MAX', 'ConcurrentExecutions')],
+      new SearchGraphWidget({
+        title: 'Top consumers by function (over time)',
+        left: [searchByFunction('Maximum', 'ConcurrentExecutions')],
         width: 12,
+        height: 6,
+        legendPosition: cloudwatch.LegendPosition.BOTTOM,
+      }),
+    );
+
+    // Row 3 - Health signals + shared pool
+    dashboard.addWidgets(
+      new cloudwatch.CustomWidget({
+        functionArn: widgetFn.functionArn,
+        title: 'Top 10 throttled functions',
+        params: { action: 'top_n_bar', metric: 'throttles', limit: 10 },
+        width: 8,
+        height: 6,
+        updateOnRefresh: true,
+        updateOnResize: true,
+        updateOnTimeRangeChange: true,
+      }),
+      new cloudwatch.CustomWidget({
+        functionArn: widgetFn.functionArn,
+        title: 'Top 10 functions by errors',
+        params: { action: 'top_n_bar', metric: 'errors', limit: 10 },
+        width: 8,
+        height: 6,
+        updateOnRefresh: true,
+        updateOnResize: true,
+        updateOnTimeRangeChange: true,
+      }),
+      new cloudwatch.GraphWidget({
+        title: 'Unreserved (shared pool) in use',
+        left: [unreserved],
+        width: 8,
         height: 6,
       }),
     );
 
-    // Row 3 - Allocated concurrency table (RC + PC) via custom widget
+    // Row 4 - All functions: allocation + activity table (with request-limit panel)
     dashboard.addWidgets(
       new cloudwatch.CustomWidget({
         functionArn: widgetFn.functionArn,
-        title: 'All functions: allocated concurrency + peak usage',
+        title: 'All functions: allocation + activity',
         width: FULL_WIDTH,
-        height: 10,
+        height: 12,
         updateOnRefresh: true,
         updateOnResize: true,
         updateOnTimeRangeChange: true,
       }),
     );
 
-    // Row 4 - Provisioned concurrency health (per-function top-N)
+    // Row 5 - Provisioned concurrency explainer (only relevant when PC is used)
     dashboard.addWidgets(
-      new cloudwatch.GraphWidget({
-        title: 'PC utilization by function (top 10)',
-        left: [topNByFunction('MAX', 'ProvisionedConcurrencyUtilization')],
-        width: 12,
-        height: 6,
-      }),
-      new cloudwatch.GraphWidget({
-        title: 'PC spillover by function (top 10)',
-        left: [topNByFunction('SUM', 'ProvisionedConcurrencySpilloverInvocations')],
-        width: 12,
-        height: 6,
+      new cloudwatch.TextWidget({
+        markdown: [
+          '### Provisioned concurrency (PC) charts',
+          '',
+          'These apply **only to functions with provisioned concurrency configured**. If you do not use PC, these charts will be empty.',
+          '',
+          '- **Utilization** — how much of the provisioned capacity was in use (0–100%). Low utilization means you are paying for idle warm environments.',
+          '- **Spillover** — invocations that exceeded provisioned capacity and ran on on-demand (or were rejected, depending on configuration). High spillover means PC is set too low for actual traffic.',
+        ].join('\n'),
+        width: FULL_WIDTH,
+        height: 3,
       }),
     );
 
-    // Row 5 - Early warning / health
+    // Row 6 - Provisioned concurrency metrics (custom bars — SEARCH labels PC
+    // metrics with the metric name, not FunctionName)
     dashboard.addWidgets(
-      new cloudwatch.GraphWidget({
-        title: 'Top 10 throttled functions',
-        left: [
-          new cloudwatch.MathExpression({
-            expression:
-              'SELECT SUM(Throttles) FROM SCHEMA("AWS/Lambda", FunctionName) ' +
-              'GROUP BY FunctionName ORDER BY SUM() DESC LIMIT 10',
-            usingMetrics: {},
-            period,
-            label: '',
-          }),
-        ],
-        view: cloudwatch.GraphWidgetView.BAR,
-        width: 8,
+      new cloudwatch.CustomWidget({
+        functionArn: widgetFn.functionArn,
+        title: 'PC utilization % by function',
+        params: { action: 'pc_bar', metric: 'utilization' },
+        width: 12,
         height: 6,
+        updateOnRefresh: true,
+        updateOnResize: true,
+        updateOnTimeRangeChange: true,
       }),
-      new cloudwatch.GraphWidget({
-        title: 'Error rate by function (%)',
-        left: [
-          new cloudwatch.MathExpression({
-            expression:
-              'SELECT AVG(Errors) FROM SCHEMA("AWS/Lambda", FunctionName) ' +
-              'GROUP BY FunctionName ORDER BY AVG() DESC LIMIT 10',
-            usingMetrics: {},
-            period,
-            label: '',
-          }),
-        ],
-        view: cloudwatch.GraphWidgetView.BAR,
-        width: 8,
+      new cloudwatch.CustomWidget({
+        functionArn: widgetFn.functionArn,
+        title: 'PC spillover invocations by function',
+        params: { action: 'pc_bar', metric: 'spillover' },
+        width: 12,
         height: 6,
-      }),
-      new cloudwatch.GraphWidget({
-        title: 'Async event age by function (top 10)',
-        left: [topNByFunction('MAX', 'AsyncEventAge')],
-        width: 8,
-        height: 6,
+        updateOnRefresh: true,
+        updateOnResize: true,
+        updateOnTimeRangeChange: true,
       }),
     );
 
-    // Row 6 - Decision aid
+    // Row 7 - Decision aid
     const region = this.region;
     const quotaConsole = `https://${region}.console.aws.amazon.com/servicequotas/home/services/lambda/quotas/L-B99A9384`;
     const requestsConsole = `https://${region}.console.aws.amazon.com/servicequotas/home/requests?region=${region}`;

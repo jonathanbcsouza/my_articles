@@ -1,6 +1,6 @@
 # CDK deployment (TypeScript)
 
-TypeScript CDK implementation of the same stack as `../cdk-python` (Python). Both produce functionally equivalent CloudFormation templates and deploy the same Python Lambda handler.
+TypeScript CDK implementation of the same stack as `../python` (Python). Both produce functionally equivalent CloudFormation templates and deploy the same Python Lambda handler.
 
 Resources created:
 
@@ -22,7 +22,7 @@ Resources created:
 
 ## Deploy
 
-From this folder (`iac/cdk-typescript`):
+From this folder (`auto-increase/typescript`):
 
 ```bash
 npm install
@@ -81,4 +81,4 @@ aws lambda get-function-concurrency \
 
 ## Parity with the Python CDK
 
-The TypeScript stack produces the same resources as `../cdk-python/stack.py` — same function name, same IAM statements (including the same Sid `SelfThrottleViaReservedConcurrency`), same alarm configuration, same Lambda handler (shared verbatim). Pick whichever language you prefer.
+The TypeScript stack produces the same resources as `../python/stack.py` — same function name, same IAM statements (including the same Sid `SelfThrottleViaReservedConcurrency`), same alarm configuration, same Lambda handler (shared verbatim). Pick whichever language you prefer.

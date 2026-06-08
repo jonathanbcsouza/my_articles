@@ -1,6 +1,6 @@
 # CDK Solution: Monitoring + Automated Quota Increase
 
-![AWS Lambda concurrency monitoring overview with automated limit increase](../images/Diagram.drawio.png)
+![AWS Lambda concurrency monitoring overview with automated limit increase](../docs/images/article/Diagram.drawio.png)
 
 This folder contains CDK implementations (TypeScript and Python) that deploy the full monitoring stack from the article, plus an optional Lambda function that **automatically requests a quota increase** when the alarm fires.
 
@@ -14,8 +14,8 @@ Both implementations produce the same CloudFormation stack:
 
 Versions:
 
-- [`cdk-typescript/`](./cdk-typescript/) — TypeScript CDK
-- [`cdk-python/`](./cdk-python/) — Python CDK
+- [`typescript/`](./typescript/) — TypeScript CDK
+- [`python/`](./python/) — Python CDK
 
 ---
 
@@ -194,7 +194,7 @@ def lambda_handler(event, context):
 
 Go back to your CloudWatch alarm → **Edit** → **Configure actions** → **Add Lambda action**. Select **In alarm** as the trigger state and choose your function:
 
-![CloudWatch alarm configuration - adding a Lambda action triggered on the In alarm state](../images/alarm-lambda-action.png)
+![CloudWatch alarm configuration - adding a Lambda action triggered on the In alarm state](../docs/images/article/alarm-lambda-action.png)
 
 The SNS action stays as-is for notifications. The Lambda action runs independently alongside it.
 
@@ -202,9 +202,9 @@ The SNS action stays as-is for notifications. The Lambda action runs independent
 
 You can test the function by invoking it directly from the AWS Console. After you invoke it, go to **Service Quotas** → **Recent quota increase requests** and confirm if the limit increase request was sent/approved or a new Support Case was created.
 
-![Service Quotas console - recent quota increase requests showing a newly opened AWS Lambda Concurrent executions case](../images/service-quotas-request-list.png)
+![Service Quotas console - recent quota increase requests showing a newly opened AWS Lambda Concurrent executions case](../docs/images/article/service-quotas-request-list.png)
 
-![AWS Support case details page for the Lambda concurrent-executions quota increase request (subject, status, category, creation time)](../images/service-quotas-case-details.png)
+![AWS Support case details page for the Lambda concurrent-executions quota increase request (subject, status, category, creation time)](../docs/images/article/service-quotas-case-details.png)
 
 That's it. When concurrency crosses 70%, the alarm fires, your team gets notified via SNS, and the Lambda function requests a limit increase. If the limit increase is not automatically approved, `Service Quotas` opens a support case in your account that will be assigned for human review.
 

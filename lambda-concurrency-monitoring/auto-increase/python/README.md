@@ -21,7 +21,7 @@ cdk bootstrap
 
 ## Deploy
 
-From this folder (`iac/cdk-python`):
+From this folder (`auto-increase/python`):
 
 ```bash
 python3 -m venv .venv
