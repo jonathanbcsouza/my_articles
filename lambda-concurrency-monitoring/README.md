@@ -4,22 +4,80 @@
 
 ## What is AWS Lambda?
 
-AWS Lambda is a compute service that runs your code in response to events (API requests, queue messages, file uploads) without requiring you to manage servers. It scales automatically as traffic increases.
+AWS Lambda is a compute service that runs your code in response to events (API requests, queue messages, file uploads, and so on) without requiring you to manage servers. It scales automatically as traffic increases.
 
-## The problem
+## How much can it scale?
 
-When you scale serverless architectures, observability can be a challenge. Many times, you might be using a Lambda function, and do not want to get a surprise by having a cascading production issue because you found your functions were throttling because a regional limit was hit.
+While Lambda lets you run code without managing servers, you still need to understand concurrency. When a function receives more requests, Lambda scales up the number of execution environments to handle them. To avoid throttling in production, you need to know how regional limits work.
 
-In this article I will explain what the regional concurrency limit means, how to monitor it, and how it translates to the current capacity you have for your AWS Region.
+There are two scaling quotas to consider: **account concurrency** and **burst concurrency**.
 
-> **Recommended:** See [concurrency dashboard CDK project](./dashboard-project) that is ready for dpeloyment. It visualizes regional capacity, per-function usage, and a reclaim -> cap -> increase decision guide, so you can decide before changing anything. The sections below explain the concepts behind it. Otherwise, if your growth is healthy and organic, you can then also look at the [automated limit increase solution](./iac).
+**Account concurrency** is the maximum concurrency in a Region. It is shared across all functions in an account. The default Regional concurrency quota starts at 1,000, which you can increase via Service Quotas.
 
-**Topics:**
+**Burst concurrency** is a separate limit on how quickly Lambda can scale up in response to sudden traffic spikes.
+
+In this article I will explain what the regional concurrency limit means, how to monitor it, and how it translates to the capacity you have available in your AWS Region.
+
+When your regional concurrency limit is hit, throttling can have a cascading effect. If your application uses Lambda as middleware between, for instance, API Gateway, SQS, Kinesis, or DynamoDB, throttles will affect how those services behave. It is important to monitor proactively — before issues happen, not after.
+
+> **Suggestion:** Consider a concurrency dashboard. This [example project in CDK](./dashboard-project/) shows which functions hold reserved or provisioned concurrency, which are the top consumers, and whether you should reclaim, cap, or increase capacity. The sections below explain the concepts behind it. For legitime scaling traffic, you can review [alarm + automated limit increase](./iac/) that can help to provide a 1-shot automated limit increase while requiring human verification.
+
+![Lambda concurrency dashboard — regional capacity, per-function RC/PC table, top consumers, and decision guide](./dashboard-project/images/lambda-concurrency-dashboard.png)
+
+**What we will be discussing:**
 
 1. How Lambda concurrency works (just enough to understand the metric choice)
-2. Why `ClaimedAccountConcurrency` is the right metric to monitor
+2. Understanding the `ClaimedAccountConcurrency` metric
 3. Setting up a CloudWatch alarm step by step
-4. Automated solution for organic healthy traffic
+4. **Dashboard solution** — visualize RC, PC, top consumers, and investigate before acting
+5. **Optional:** automated limit increase for confirmed healthy traffic
+
+**Note:** This guide uses the **AWS Console** intentionally. While Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient for production environments, we start with the console so the mechanics are clear. Once you are familiar with the flow, translating to IaC is straightforward. Ready-to-deploy CDK examples are at the end of this article.
+
+## How Lambda concurrency works
+
+Concurrency is the number of in-flight requests that your AWS Lambda function is handling at the same time. There are two types of concurrency controls available: Reserved concurrency (RC) and Provisioned concurrency (PC).
+
+For each concurrent request, Lambda provisions a separate instance of your execution environment. Execution environments are secure, isolated environments that run on hardware-virtualized virtual machines (MicroVMs). They manage the resources required to run your function and provide lifecycle support for the function's runtime and any external extensions associated with your function.
+
+As your functions receive more requests, Lambda automatically handles scaling the number of execution environments until you reach your account's concurrency limit.
+
+As per AWS documentation, Lambda provides your account with a total concurrency limit of 1,000 concurrent executions across all functions in an AWS Region.
+
+### What is my current limit?
+
+By default, every account gets **1,000 concurrent executions per Region**. However, this is a soft limit you can increase via [Service Quotas](https://docs.aws.amazon.com/servicequotas/latest/userguide/request-quota-increase.html).
+
+
+**Notes:**
+
+> New AWS accounts have reduced concurrency and memory quotas. AWS raises these quotas automatically based on your usage.
+
+> Lambda always [keeps 100 units](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#:~:text=At%20the%20function,the%20function%20level.) available for functions without RC.
+
+For more information, please refer to [Understanding and visualizing concurrency](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#understanding-concurrency).
+
+### Regional Concurrency x RPS
+
+Lambda also enforces a **requests per second** limit equal to 10x your concurrency limit. You can be throttled by this request rate even if concurrency is not fully utilized.
+
+## Visual Learner?
+
+Alright, let's see this diagram below.
+
+![Lambda concurrency diagram showing multiple concurrent requests over time](./images/concurrency-5-animation-summary.png)
+
+From the green lines, at time `t1`, there are three active environments serving three concurrent requests.
+
+At `t2` there are **5 active environments** , so the concurrency at that moment is **5**. Requests 1 through 5 each had their "INIT" phase. Hence, they were all cold starts, and each consumed 1 concurrent execution.
+
+Then, between `t3` and `t4`, requests 6, 7, 8 did not have "INIT". This means they reused environments that started earlier, so these requests were `warm starts`. 
+
+Around `t4` request 9 required a new environment, hence, it was a cold start. After this, request 10 came in (warm start), and reused a pre-existing environment.
+
+For these requests, 6 required new execution environments (cold starts) and 4 reused existing warm environments. Important to note that when observing the green line, the number of concurrent requests varied over time.
+
+---
 
 **Considerations:**
 
@@ -35,51 +93,9 @@ When the alarm fires, it is recommended to investigate before requesting more ca
 
 In every case, throttling can benefit you and act as a circuit breaker. Only increase the limit when the consumer is healthy and the traffic is legitimate.
 
-**Note:** This guide uses the **AWS Console** intentionally. While Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, console-first instructions make the concepts easier to learn. Once you understand the mechanics, translating to IaC is straightforward. A CDK example ready for deployment is available [`here`](./iac).
-
 ---
 
-## How Lambda concurrency works
-
-Concurrency is the number of in-flight requests that your AWS Lambda function is handling at the same time. There are two types of concurrency controls available: Reserved concurrency (RC) and Provisioned concurrency (PC).
-
-For each concurrent request, Lambda provisions a separate instance of your execution environment. Execution environments are secure, isolated environments that run on hardware-virtualized virtual machines (MicroVMs). They manage the resources required to run your function and provide lifecycle support for the function's runtime and any external extensions associated with your function.
-
-As your functions receive more requests, Lambda automatically handles scaling the number of execution environments until you reach your account's concurrency limit.
-
-By default, Lambda provides your account with a total concurrency limit of 1,000 concurrent executions across all functions in an AWS Region.
-
-> When your regional concurrency limit is hit, throttling can have a cascading effect. If your application relies on Lambda as a middleware between your API, SQS, Kinesis or DynamoDB, throttles will affect how these services behave.
-
-To better understand it, let's see this diagram.
-
-![Lambda concurrency diagram showing multiple concurrent requests over time](./images/concurrency-5-animation-summary.png)
-
-See the green lines, at time `t1`, there are three active environments serving three concurrent requests.
-
-At `t2` there are **5 active environments** , so the concurrency at that moment is **5**. Requests 1 through 5 each had their "INIT" phase. Hence, they were all cold starts, and each consumed 1 concurrent execution.
-
-Then, between `t3` and `t4`, requests 6, 7, 8 did not have "INIT". This means they reused environments that started earlier, so these requests were `warm starts`. 
-
-Around `t4` request 9 required a new environment, hence, it was a cold start. After this, request 10 came in (warm start), and reused a pre-existing environment.
-
-For these requests, 6 required new execution environments (cold starts) and 4 reused existing warm environments. Important to note that when observing the green line, the number of concurrent requests varied over time.
-
-### What is my current limit?
-
-By default, every account gets **1,000 concurrent executions per Region**. However, this is a soft limit you can increase via [Service Quotas](https://docs.aws.amazon.com/servicequotas/latest/userguide/request-quota-increase.html).
-
-> New AWS accounts have reduced concurrency and memory quotas. AWS raises these quotas automatically based on your usage.
-
-For more information, please refer to [Understanding and visualizing concurrency](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#understanding-concurrency).
-
-### Regional Concurrency x RPS
-
-Lambda also enforces a **requests per second** limit equal to 10x your concurrency limit. You can be throttled by this request rate even if concurrency is not fully utilized.
-
----
-
-## 1. Understanding the ClaimedAccountConcurrency
+## 1. Understanding the concurrency metrics
 
 For monitoring concurrency, Lambda exposes different metrics in CloudWatch:
 
@@ -107,7 +123,7 @@ Allocated Concurrency represents the sum of both:
 
 **Notes:**
 
-> Lambda always [keeps 100 units]((https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#:~:text=At%20the%20function,the%20function%20level.)) available for functions without RC.
+> Lambda always [keeps 100 units](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#:~:text=At%20the%20function,the%20function%20level.) available for functions without RC.
 
 > If a function has both RC and PC configured, Lambda counts only the RC (since RC should always be ≥ PC). PC is only counted separately for functions that don't have RC.
 
@@ -135,8 +151,6 @@ For the example above, `ClaimedAccountConcurrency` is equal to 9, and we only ha
 
 ![Scenario 1 breakdown: account limit 10, ClaimedAccountConcurrency = 9, only 1 unit of headroom left](./images/breakdown-scenario-1.svg)
 
-
-
 #### Scenario 2 - Account Concurrency Limit: 1,000
 
 | Configuration | Value |
@@ -157,7 +171,6 @@ ClaimedAccountConcurrency = 60 + allocated concurrency (400 + 400 + 100 = 900)
 As per the above, only 60 on-demand invocations are running, but 900 additional units are allocated (claimed by RC/PC), giving a total `ClaimedAccountConcurrency` of **960**. Actual concurrency available for new on-demand invocations is **40**.
 
 ![Scenario 2 breakdown (steady state): account limit 1,000, 60 unreserved executions + 900 allocated = 960 claimed, 40 available](./images/breakdown-scenario-2.svg)
-
 
 #### Scenario 3 - 150 Unreserved Concurrency Spike
 
@@ -330,21 +343,57 @@ Once active, the alarm graph shows your utilization over time:
 
 ## Deploy as code (CDK)
 
-Prefer code over the console? Everything in this article is available as standalone CDK apps.
+Prefer code over the console? Two standalone CDK apps are included in this repository.
 
-### The main solution: the concurrency dashboard
+### 1. Concurrency dashboard (start here)
 
-Start here. The [`dashboard-project/`](./dashboard-project) deploys an interactive CloudWatch dashboard: regional capacity, per-function consumption, a live reserved/provisioned concurrency table, and a reclaim -> cap -> increase decision guide. It gives you the data to decide before changing anything, which is exactly the "investigate first" approach this article recommends.
+The [`dashboard-project/`](./dashboard-project) deploys an interactive CloudWatch dashboard named `lambda-concurrency`. Use it to **see what is consuming capacity in your Region before you change anything** — the same "investigate first" approach this article recommends.
+
+**Regional capacity (top row)**
+
+- **% Claimed** — utilization at a glance
+- **Claimed vs Available** — pie chart of used vs remaining capacity
+- **Claimed concurrency vs limit** — trend over time with a **70% threshold** line
+
+**Who is using the pool (second row)**
+
+- **Unreserved (shared pool) in use** — on-demand traffic competing for the remaining pool
+- **Top 10 consumers (over time)** — which functions have the highest concurrent executions
+
+**Per-function allocation table (custom widget)**
+
+This is the main investigative view. For **every function in the Region**, the table shows:
+
+| Column | What it tells you |
+|--------|-------------------|
+| **Reserved (RC)** | Guaranteed capacity allocated to the function (counts against the regional limit even when idle) |
+| **Provisioned (PC)** | Pre-warmed environments configured for the function |
+| **Peak concurrency** | Maximum concurrent executions over the dashboard time range |
+
+The table is sortable (click column headers) and defaults to RC holders first, then PC, then peak usage — so you can quickly spot functions that **claim capacity without using it**, or functions that **dominate the shared pool**.
+
+From the same widget, you can submit a **Service Quotas limit increase request** (with a configurable increment) after you have confirmed the growth is legitimate.
+
+**Health signals (lower rows)**
+
+- **PC utilization** and **PC spillover** — are you paying for provisioned capacity you are not using?
+- **Top throttled functions**, **error rate**, and **async event age** — retry storms and async backlogs before they become outages
+
+**Decision guide**
+
+A built-in **reclaim → cap → increase** checklist with links to AWS docs helps you choose the right action: trim wasted RC/PC, cap a misbehaving function, or request a higher regional limit.
 
 ![Lambda concurrency dashboard](./dashboard-project/images/lambda-concurrency-dashboard.png)
 
-### Add an alarm to get notified
+Deploy: see [`dashboard-project/README.md`](./dashboard-project/README.md).
 
-The [`iac/`](./iac) folder (TypeScript and Python) deploys the `% Claimed` alarm from this article, wired to SNS so your team is notified at 70%.
+### 2. Alarm + optional automated limit increase
 
-### If traffic is healthy: automate the limit increase
+The [`iac/`](./iac) folder (TypeScript and Python) deploys the **% Claimed** alarm from this article, wired to SNS so your team is notified at 70%.
 
-Once you have used the dashboard to confirm the growth is healthy and organic (not a retry storm or bad actor), you can also use the automated limit increase solution. `iac/` includes an optional Lambda that requests a quota increase when the alarm fires, then disables itself (sets its own reserved concurrency to 0) so the next breach needs a human. Use it only for traffic you have already confirmed is legitimate, since it can otherwise give a failing function more room to fail. See [`iac/README.md`](./iac/README.md) for trade-offs.
+It also includes an **optional** Lambda that requests a quota increase when the alarm enters the `ALARM` state, then disables itself (sets its own reserved concurrency to 0) so the next breach requires human review.
+
+Use automated limit increase **only after** the dashboard confirms traffic is healthy and organic — not during a retry storm or runaway error loop. See [`iac/README.md`](./iac/README.md).
 
 ### References:
 
