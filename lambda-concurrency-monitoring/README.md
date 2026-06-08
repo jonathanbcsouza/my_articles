@@ -8,26 +8,25 @@ AWS Lambda is a compute service that runs your code in response to events (API r
 
 ## How much can it scale?
 
-In Lamnbda, Concurrency is how many invocations your functions can run at the same time in a Region. As traffic grows, Lambda adds execution environments to keep up until you hit your regional concurrency limit. Past that point, new requests are throttled. Therefore, it is crucial to understand these limits and how to monitor them. We do not want to get  surprise in productions, right?
+In Lambda, concurrency is how many invocations your functions can run at the same time in a Region. As traffic grows, Lambda adds execution environments to keep up, until you reach your regional concurrency limit. Past that point, new requests are throttled. Understanding these limits, and knowing how to monitor them, is what keeps you from being surprised in production.
 
-Therefore, there are two scaling quotas to consider: **account concurrency** and **burst concurrency**.
+There are two scaling quotas to consider: **account concurrency** and **burst concurrency**.
 
-Account concurrency is the hard ceiling on simultaneous executions in a Region. Every function in the account draws from the same pool. The default quota is 1,000 concurrent executions per Region. You can raise it through Service Quotas.
+**Account concurrency** is the hard ceiling on simultaneous executions in a Region. Every function in the account draws from the same pool. The default quota is 1,000 concurrent executions per Region, and you can raise it through Service Quotas.
 
-Burst concurrency is different: it caps how fast Lambda can scale in a sudden spike.
+**Burst concurrency** is different. It caps how fast Lambda can scale during a sudden spike.
 
-This article explains what that regional limit really means, how to monitor it with CloudWatch, and how much on-demand capacity you actually have left in a Region.
+This article explains what the regional limit really means, how to monitor it with CloudWatch, and how much on-demand capacity you actually have left in a Region.
 
-In this article we will review what the regional concurrency limit means, how to monitor it, and how it translates to the capacity you have available in your AWS Region.
+When your regional concurrency limit is hit, throttling can have a cascading effect. If your application uses Lambda as middleware between, for instance, API Gateway, SQS, Kinesis, or DynamoDB, throttles will affect how those services behave. It is important to monitor proactively.
 
-When your regional concurrency limit is hit, throttling can have a cascading effect. If your application uses Lambda as middleware between, for instance, API Gateway, SQS, Kinesis, or DynamoDB, throttles will affect how those services behave. It is important to monitor proactively — before issues happen, not after.
+This repository also includes [an example project in CDK](./dashboard/). The dashboard shows which functions hold reserved or provisioned concurrency, which are the top consumers, and whether you should reclaim, cap, or increase capacity. This article outlines the concepts behind it. For legitimate scaling traffic, you can also review the [automated limit increase](./auto-increase/), which provides a one shot automated increase while still requiring human verification.
 
-In this article you also have access to [this example project in CDK](./dashboard/). This dashboard will show which functions hold reserved or provisioned concurrency, which are the top consumers, and whether you should reclaim, cap, or increase capacity. This articles outlines the concepts behind it. For legitime scaling traffic, you can review [automated limit increase](./auto-increase/) that can help to provide a 1-shot automated limit increase while requiring human verification.
+![Lambda concurrency dashboard, regional capacity, alarm, top consumers, throttles, and unreserved pool](./docs/images/dashboard/lambda-concurrency-dashboard-1.png)
 
-![Lambda concurrency dashboard — regional capacity, alarm, top consumers, throttles, and unreserved pool](./docs/images/dashboard/lambda-concurrency-dashboard-1.png)
+The dashboard also gives you an actionable button so you can make quick decisions.
 
-You will also have actionable button to ensure you can make quick decisions.
-![Lambda concurrency dashboard — regional capacity, alarm, top consumers, throttles, and unreserved pool](./docs/images/dashboard/lambda-concurrency-dashboard-2.png)
+![Lambda concurrency dashboard, per function allocation table with reserved and provisioned concurrency, peak concurrency, invocations, errors, and throttles](./docs/images/dashboard/lambda-concurrency-dashboard-2.png)
 
 **What we will be discussing:**
 
@@ -38,7 +37,6 @@ You will also have actionable button to ensure you can make quick decisions.
 5. **Optional:** automated limit increase for confirmed healthy traffic
 
 **Note:** This guide uses the **AWS Console** intentionally. While Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient for production environments, we start with the console so the mechanics are clear. Once you are familiar with the flow, translating to IaC is straightforward. Ready-to-deploy CDK examples are at the end of this article.
-
 
 
 ## How Lambda concurrency works
@@ -76,7 +74,7 @@ Alright, let's see this diagram below.
 
 From the green lines, at time `t1`, there are three active environments serving three concurrent requests.
 
-At `t2` there are **5 active environments** , so the concurrency at that moment is **5**. Requests 1 through 5 each had their "INIT" phase. Hence, they were all cold starts, and each consumed 1 concurrent execution.
+At `t2` there are **5 active environments**, so the concurrency at that moment is **5**. Requests 1 through 5 each had their "INIT" phase. Hence, they were all cold starts, and each consumed 1 concurrent execution.
 
 Then, between `t3` and `t4`, requests 6, 7, 8 did not have "INIT". This means they reused environments that started earlier, so these requests were `warm starts`. 
 
@@ -114,7 +112,7 @@ For monitoring concurrency, Lambda exposes different metrics in CloudWatch:
 
 "_Ahhh, okay, if I want to monitor the regional limit, I must track the ConcurrentExecutions metric!_"
 
-Well... partially correct. Monitoring these can help with planning distribution of your current limit across your region and how a specific function is consuming the shared pool; however, for understanding the actual utilization in your region, we must focus on ClaimedAccountConcurrency instead.
+Well... partially correct. Monitoring these can help you plan how your current limit is distributed across your Region, and how a specific function consumes the shared pool. However, to understand the actual utilization in your Region, we must focus on ClaimedAccountConcurrency instead.
 
 ### Okay, so, what does ClaimedAccountConcurrency capture?
 
@@ -142,7 +140,7 @@ https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#metric
 
 ## 2. Calculating The Regional Limit
 
-#### Scenario 1 - Account Concurrency Limit: 10
+#### Scenario 1: Account Concurrency Limit 10
 
 Let's think about this example:
 
@@ -151,14 +149,14 @@ Let's think about this example:
 | Account concurrency limit for your region | 10 |
 | Reserved concurrency (function A) | 3 |
 | Reserved concurrency (function B) | 3 |
-| Provisioned concurrency (function C, PC only — no RC) | 2 |
+| Provisioned concurrency (function C, PC only, no RC) | 2 |
 | Active executions (unreserved concurrent executions for function D) | 1 |
 
 For the example above, `ClaimedAccountConcurrency` is equal to 9, and we only have 1 as our current capacity for this region.
 
 ![Scenario 1 breakdown: account limit 10, ClaimedAccountConcurrency = 9, only 1 unit of headroom left](./docs/images/article/breakdown-scenario-1.svg)
 
-#### Scenario 2 - Account Concurrency Limit: 1,000
+#### Scenario 2: Account Concurrency Limit 1,000
 
 | Configuration | Value |
 | :------------------------------------------------ | :----- |
@@ -179,7 +177,7 @@ As per the above, only 60 on-demand invocations are running, but 900 additional 
 
 ![Scenario 2 breakdown (steady state): account limit 1,000, 60 unreserved executions + 900 allocated = 960 claimed, 40 available](./docs/images/article/breakdown-scenario-2.svg)
 
-#### Scenario 3 - 150 Unreserved Concurrency Spike
+#### Scenario 3: 150 Unreserved Concurrency Spike
 
 If any executions are running on _unreserved_ functions and `ClaimedAccountConcurrency` goes beyond the regional limit, you should expect throttling.
 
@@ -204,7 +202,7 @@ You can see more examples from [Reserved concurrency diagram](https://docs.aws.a
 
 ## 3. What about creating an alarm?
 
-> **Note:** While using Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, using console first can be beneficial for learning purposes. The idea is to get familiar with the concepts first; then translating to IaC will be straightforward.
+> **Note:** While using Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, using the console first can be beneficial for learning purposes. The idea is to get familiar with the concepts first. After that, translating to IaC is straightforward.
 
 ### Viewing the relevant metrics
 
@@ -283,22 +281,22 @@ d. Click **Update**
 After pasting the JSON and clicking **Update**, you should see the metrics table populated with all five entries. The table shows each metric's ID, label, details (source metric or expression), statistic, and period:
 
 
-![CloudWatch metrics console - line chart view with all five entries (m1, e1, m2, e2, e5) and tooltip showing current values](./docs/images/article/metrics-line-chart-full.png)
+![CloudWatch metrics console, line chart view with all five entries (m1, e1, m2, e2, e5) and tooltip showing current values](./docs/images/article/metrics-line-chart-full.png)
 
 | ID | Type | Purpose |
 | :---- | :---------- | :------------------------------------------------------------------------------------ |
-| `m1` | Metric | `ConcurrentExecutions` - used as input for `SERVICE_QUOTA()`. Hidden from the graph. |
-| `e1` | Expression | `SERVICE_QUOTA(m1)` - dynamically fetches your actual regional concurrency limit |
-| `m2` | Metric | `ClaimedAccountConcurrency` - the metric we want to monitor |
-| `e2` | Expression | `(m2/e1) * 100` - utilization as a percentage |
-| `e5` | Expression | `e1 - m2` - remaining available concurrency |
+| `m1` | Metric | `ConcurrentExecutions`, used as input for `SERVICE_QUOTA()`. Hidden from the graph. |
+| `e1` | Expression | `SERVICE_QUOTA(m1)` dynamically fetches your actual regional concurrency limit |
+| `m2` | Metric | `ClaimedAccountConcurrency`, the metric we want to monitor |
+| `e2` | Expression | `(m2/e1) * 100`, utilization as a percentage |
+| `e5` | Expression | `e1 - m2`, remaining available concurrency |
 
 > **Why `SERVICE_QUOTA(m1)` instead of hardcoding 1,000?** The concurrency limit is a soft limit. If you've requested an increase, `SERVICE_QUOTA()` dynamically reflects your actual current limit for `ConcurrentExecutions`, so no need to update the alarm every time your quota changes.
 
 If you would like to explore a **Pie** view, select only `ClaimedAccountConcurrency` and `Available` (checkboxes on the left). Ensure to select the specific time period where you intend to reflect on the chart visualization.
 
 
-![CloudWatch metrics console - pie chart view showing ClaimedAccountConcurrency vs Available with metrics table (m1, e1, m2, e2, e5)](./docs/images/article/metrics-pie-chart-full.jpeg)
+![CloudWatch metrics console, pie chart view showing ClaimedAccountConcurrency vs Available with metrics table (m1, e1, m2, e2, e5)](./docs/images/article/metrics-pie-chart-full.jpeg)
 
 Once you have the above, this confirms you have the metrics and expressions that are relevant for monitoring this regional limit.
 
@@ -314,7 +312,7 @@ b. Configure the alarm condition:
 | **Threshold type** | Static | Fixed threshold value |
 | **Condition** | Greater than **70** | 70% gives headroom before hitting the limit |
 | **Period** | 1 minute | Matches Lambda's metric emission granularity |
-| **Statistic** | Maximum | Catches spikes - average would smooth them out |
+| **Statistic** | Maximum | Catches spikes that an average would hide |
 | **Datapoints to alarm** | 1 out of 1 | Triggers on the first breach |
 
 ### Configure actions
@@ -330,7 +328,7 @@ Configure an **SNS topic** as the notification target. This can deliver alerts v
 Give the alarm a descriptive name and optionally add a Markdown description (rendered in the CloudWatch console):
 
 
-![CloudWatch alarm details - name and Markdown description setup](./docs/images/article/alarm-details-setup.png)
+![CloudWatch alarm details, name and Markdown description setup](./docs/images/article/alarm-details-setup.png)
 
 ### Review and create
 
@@ -344,7 +342,7 @@ Once active, the alarm graph shows your utilization over time:
 - **Threshold** → 70%
 - The alarm bar at the bottom transitions from **OK** (green) to **In alarm** (red) when the threshold is breached
 
-![CloudWatch alarm graph - % Claimed metric crossing the 70% threshold, alarm bar transitioning from OK to In alarm](./docs/images/article/alarm-graph-threshold-70.png)
+![CloudWatch alarm graph, % Claimed metric crossing the 70% threshold, alarm bar transitioning from OK to In alarm](./docs/images/article/alarm-graph-threshold-70.png)
 
 ---
 
@@ -354,7 +352,7 @@ Prefer code over the console? Two standalone CDK apps are included in this repos
 
 ### 1. Concurrency dashboard (start here)
 
-The [`dashboard/`](./dashboard) deploys an interactive CloudWatch dashboard named `lambda-concurrency`. Use it to **see what is consuming capacity in your Region before you change anything**. The same "investigate first" approach this article recommends.
+The [`dashboard/`](./dashboard) deploys an interactive CloudWatch dashboard named `lambda-concurrency`. Use it to **see what is consuming capacity in your Region before you change anything**. It follows the same "investigate first" approach this article recommends.
 
 [Architecture diagram (draw.io)](./docs/images/dashboard/lambda-concurrency-dashboard-architecture.drawio) · [Guide](./docs/images/dashboard/lambda-concurrency-dashboard-architecture.md)
 
@@ -379,34 +377,17 @@ This is the main investigative view. For **every function in the Region**, the t
 | **Provisioned (PC)** | Pre-warmed environments configured for the function |
 | **Peak concurrency** | Maximum concurrent executions over the dashboard time range |
 
-The table is sortable (click column headers) and defaults to RC holders first, then PC, then peak usage — so you can quickly spot functions that **claim capacity without using it**, or functions that **dominate the shared pool**.
+The table is sortable (click column headers) and defaults to RC holders first, then PC, then peak usage. This lets you quickly spot functions that **claim capacity without using it**, or functions that **dominate the shared pool**.
 
-From the same widget, you can submit a **Service Quotas limit increase request** (with a configurable increment) after you have confirmed the growth is legitimate.
-
-**Health signals (lower rows)**
-
-- **PC utilization** and **PC spillover** — are you paying for provisioned capacity you are not using?
-- **Top throttled functions**, **error rate**, and **async event age** — retry storms and async backlogs before they become outages
-
-**Decision guide**
-
-A built-in **reclaim → cap → increase** checklist with links to AWS docs helps you choose the right action: trim wasted RC/PC, cap a misbehaving function, or request a higher regional limit.
-
-![Lambda concurrency dashboard — regional capacity, alarm, top consumers, throttles, and unreserved pool](./docs/images/dashboard/lambda-concurrency-dashboard-1.png)
-
-![Lambda concurrency dashboard — per-function RC/PC table, activity metrics, and quota increase panel](./docs/images/dashboard/lambda-concurrency-dashboard-2.png)
-
-![Lambda concurrency dashboard — PC utilization and spillover by function, plus decision guide](./docs/images/dashboard/lambda-concurrency-dashboard-3.png)
-
-See [`dashboard/README.md`](./dashboard/README.md). The stack includes a **% Claimed > 70%** SNS alarm which will provide a direct link to the dashboard, so the team can review it once alarm is triggered:  [Sample alarm email](./dashboard/README.md#sample-alarm-email) in that README.
+See [`dashboard/README.md`](./dashboard/README.md). The stack includes a **% Claimed > 70%** SNS alarm that provides a direct link to the dashboard, so the team can review it once the alarm is triggered. See [Sample alarm email](./dashboard/README.md#sample-alarm-email) in that README.
 
 ### 2. Alarm + optional automated limit increase
 
-The [`auto-increase/`](./auto-increase) folder (TypeScript and Python) deploys the **% Claimed** alarm from this article, wired to SNS so your team is notified at 70%.
+The [`auto-increase/`](./auto-increase) deploys the **% Claimed** alarm from this article, wired to SNS so your team is notified at 70%.
 
 It also includes an **optional** Lambda that requests a quota increase when the alarm enters the `ALARM` state, then disables itself (sets its own reserved concurrency to 0) so the next breach requires human review.
 
-Use automated limit increase **only after** the dashboard confirms traffic is healthy and organic — not during a retry storm or runaway error loop. See [`auto-increase/README.md`](./auto-increase/README.md).
+See [`auto-increase/README.md`](./auto-increase/README.md).
 
 ### References:
 

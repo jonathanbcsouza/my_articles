@@ -38,13 +38,13 @@ Pass an email via CDK context to have the stack create an email subscription on 
 npx cdk deploy -c alertEmail=you@example.com
 ```
 
-You will receive an AWS SNS confirmation email; click the link to activate the subscription. If you omit `alertEmail`, the topic is created with no subscriptions and you add them yourself (see Notes below).
+You will receive an AWS SNS confirmation email. Click the link to activate the subscription. If you omit `alertEmail`, the topic is created with no subscriptions and you add them yourself (see Notes below).
 
 ## Customize before deploy
 
 - Alarm threshold (default 70%): update `ALARM_THRESHOLD_PERCENT` in `lib/lambda-concurrency-monitoring-stack.ts`
 - Proportional increase (default 10%): update the `INCREMENT_PERCENT` env var in the same file
-- Function/topic names: update `FUNCTION_NAME` / `TOPIC_NAME` constants — note that if you rename the function, the `lambda:PutFunctionConcurrency` policy resource (scoped to this function name) updates automatically because both read from the same constant
+- Function/topic names: update `FUNCTION_NAME` and `TOPIC_NAME` constants. If you rename the function, the `lambda:PutFunctionConcurrency` policy resource (scoped to this function name) updates automatically, because both read from the same constant
 
 ## Re-enabling after the function sets its own reserved concurrency to 0
 
@@ -66,7 +66,7 @@ aws lambda get-function-concurrency \
 
 ## Notes
 
-- The stack creates an **SNS topic** (`lambda-concurrency-alerts`). If you did not pass `-c alertEmail=...`, it has no subscriptions. Open the topic in the SNS console (or use the CLI) and add a subscription — typically an email, or an AWS Chatbot integration for Slack. Until a subscription is added, the alarm will still invoke the Lambda but no one will be notified.
+- The stack creates an **SNS topic** (`lambda-concurrency-alerts`). If you did not pass `-c alertEmail=...`, it has no subscriptions. Open the topic in the SNS console (or use the CLI) and add a subscription, typically an email, or an AWS Chatbot integration for Slack. Until a subscription is added, the alarm will still invoke the Lambda but no one will be notified.
 
   Example (email subscription after deploy):
 
@@ -81,4 +81,4 @@ aws lambda get-function-concurrency \
 
 ## Parity with the Python CDK
 
-The TypeScript stack produces the same resources as `../python/stack.py` — same function name, same IAM statements (including the same Sid `SelfThrottleViaReservedConcurrency`), same alarm configuration, same Lambda handler (shared verbatim). Pick whichever language you prefer.
+The TypeScript stack produces the same resources as `../python/stack.py`. It has the same function name, the same IAM statements (including the same Sid `SelfThrottleViaReservedConcurrency`), the same alarm configuration, and the same Lambda handler (shared verbatim). Pick whichever language you prefer.

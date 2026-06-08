@@ -1,20 +1,20 @@
 # Lambda Concurrency Dashboard
 
-CDK app that deploys a CloudWatch dashboard for Lambda concurrency in your account/Region, plus a **% Claimed > 70% alarm** that notifies an SNS topic (notification only — no automated action).
+CDK app that deploys a CloudWatch dashboard for Lambda concurrency in your account/Region, plus a **% Claimed > 70% alarm** that notifies an SNS topic (notification only, no automated action).
 
 ## Dashboard preview
 
 ### Regional capacity, alarm, and top consumers
 
-![Lambda concurrency dashboard — alarm state, % Claimed, claimed vs available, trend, top consumers, throttles, errors, and unreserved pool](../docs/images/dashboard/lambda-concurrency-dashboard-1.png)
+![Lambda concurrency dashboard, alarm state, % Claimed, claimed vs available, trend, top consumers, throttles, errors, and unreserved pool](../docs/images/dashboard/lambda-concurrency-dashboard-1.png)
 
 ### Per-function allocation and activity
 
-![Lambda concurrency dashboard — all functions table with RC, PC, peak concurrency, invocations, errors, throttles, and quota increase panel](../docs/images/dashboard/lambda-concurrency-dashboard-2.png)
+![Lambda concurrency dashboard, all functions table with RC, PC, peak concurrency, invocations, errors, throttles, and quota increase panel](../docs/images/dashboard/lambda-concurrency-dashboard-2.png)
 
 ### Provisioned concurrency and decision guide
 
-![Lambda concurrency dashboard — PC utilization and spillover by function, plus reclaim → cap → increase guide](../docs/images/dashboard/lambda-concurrency-dashboard-3.png)
+![Lambda concurrency dashboard, PC utilization and spillover by function, plus reclaim, cap, increase guide](../docs/images/dashboard/lambda-concurrency-dashboard-3.png)
 
 ## Deploy
 
@@ -92,7 +92,7 @@ Replace `us-east-1` and account ID with your Region and account. URLs in the dep
 | SNS topic | `lambda-concurrency-alerts` |
 | Lambda function | `concurrency-dashboard-widget` |
 | CloudWatch log group | `/aws/lambda/concurrency-dashboard-widget` (7-day retention) |
-| IAM role + policies | Lambda execution role; read Lambda/CloudWatch; Service Quotas on quota button |
+| IAM role + policies | Lambda execution role, read access to Lambda and CloudWatch, Service Quotas on the quota button |
 | Lambda permission | Allows CloudWatch to invoke the custom widget |
 
 The alarm here is **notification only**. The optional auto-increase Lambda (`limit-increase-request`) lives in [`../auto-increase`](../auto-increase).

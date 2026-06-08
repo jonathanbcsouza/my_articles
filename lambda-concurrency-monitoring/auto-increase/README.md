@@ -14,8 +14,8 @@ Both implementations produce the same CloudFormation stack:
 
 Versions:
 
-- [`typescript/`](./typescript/) — TypeScript CDK
-- [`python/`](./python/) — Python CDK
+- [`typescript/`](./typescript/) for the TypeScript CDK
+- [`python/`](./python/) for the Python CDK
 
 ---
 
@@ -42,7 +42,7 @@ The solution creates an alarm that triggers two independent actions:
 - **SNS** → notifies your team (email, Slack)
 - **Lambda** → requests a concurrency limit increase
 
-A Lambda function as a SNS **direct alarm action** that automatically submits a Service Quotas increase request will be created.
+The stack wires the Lambda function as a **direct CloudWatch alarm action**. When the alarm fires, the function automatically submits a Service Quotas increase request.
 
 ### The trade-off
 
@@ -77,7 +77,6 @@ logger.setLevel(logging.INFO)
 SERVICE_CODE = "lambda"
 QUOTA_CODE = "L-B99A9384"  # Concurrent executions
 INCREMENT_PERCENT = float(os.environ.get("INCREMENT_PERCENT", "0.10"))
-MAX_LIMIT = float(os.environ.get("MAX_LIMIT", "5000"))
 
 quotas = boto3.client("service-quotas")
 lambda_client = boto3.client("lambda")
@@ -94,8 +93,11 @@ def has_pending_request():
     return False
 
 
-def disarm_self(function_name):
-    """Set this function's reserved concurrency to 0 so future alarm invocations are throttled by Lambda itself."""
+def throttle_self(function_name):
+    """Set this function's reserved concurrency to 0 so future alarm
+    invocations are throttled by Lambda itself. Re-enable with:
+        aws lambda delete-function-concurrency --function-name <name>
+    """
     lambda_client.put_function_concurrency(
         FunctionName=function_name,
         ReservedConcurrentExecutions=0,
@@ -112,7 +114,7 @@ def lambda_handler(event, context):
 
     if has_pending_request():
         logger.info("Skipping: a quota increase request is already pending")
-        disarm_self(context.function_name)
+        throttle_self(context.function_name)
         return {"status": "SKIPPED", "reason": "pending request exists"}
 
     current = quotas.get_service_quota(
@@ -120,14 +122,9 @@ def lambda_handler(event, context):
     )
     current_value = current["Quota"]["Value"]
 
-    # Calculate proportional increase, rounded up, and cap at MAX_LIMIT
+    # Calculate proportional increase, rounded up
     increment = math.ceil(current_value * INCREMENT_PERCENT)
-    desired_value = min(current_value + increment, MAX_LIMIT)
-
-    if desired_value <= current_value:
-        logger.warning(f"At MAX_LIMIT={MAX_LIMIT}. Not requesting.")
-        disarm_self(context.function_name)
-        return {"status": "SKIPPED", "reason": "at max limit", "current": current_value}
+    desired_value = current_value + increment
 
     response = quotas.request_service_quota_increase(
         ServiceCode=SERVICE_CODE,
@@ -141,8 +138,8 @@ def lambda_handler(event, context):
         f"(+{increment}, {INCREMENT_PERCENT * 100:.0f}%) | Status: {status}"
     )
 
-    # Disabling here so the next increase requires a human decision
-    disarm_self(context.function_name)
+    # One-shot safety net: throttle so the next alarm requires a human decision
+    throttle_self(context.function_name)
 
     return {
         "current": current_value,
@@ -153,7 +150,7 @@ def lambda_handler(event, context):
     }
 ```
 
-### IAM permissions - Execution Role
+### IAM permissions for the execution role
 
 ```json
 {
@@ -169,7 +166,7 @@ def lambda_handler(event, context):
       "Resource": "*"
     },
     {
-      "Sid": "SelfDisarmViaReservedConcurrency",
+      "Sid": "SelfThrottleViaReservedConcurrency",
       "Effect": "Allow",
       "Action": "lambda:PutFunctionConcurrency",
       "Resource": "arn:aws:lambda:region:account-id:function:limit-increase-request"
@@ -194,7 +191,7 @@ def lambda_handler(event, context):
 
 Go back to your CloudWatch alarm → **Edit** → **Configure actions** → **Add Lambda action**. Select **In alarm** as the trigger state and choose your function:
 
-![CloudWatch alarm configuration - adding a Lambda action triggered on the In alarm state](../docs/images/article/alarm-lambda-action.png)
+![CloudWatch alarm configuration, adding a Lambda action triggered on the In alarm state](../docs/images/article/alarm-lambda-action.png)
 
 The SNS action stays as-is for notifications. The Lambda action runs independently alongside it.
 
@@ -202,7 +199,7 @@ The SNS action stays as-is for notifications. The Lambda action runs independent
 
 You can test the function by invoking it directly from the AWS Console. After you invoke it, go to **Service Quotas** → **Recent quota increase requests** and confirm if the limit increase request was sent/approved or a new Support Case was created.
 
-![Service Quotas console - recent quota increase requests showing a newly opened AWS Lambda Concurrent executions case](../docs/images/article/service-quotas-request-list.png)
+![Service Quotas console, recent quota increase requests showing a newly opened AWS Lambda Concurrent executions case](../docs/images/article/service-quotas-request-list.png)
 
 ![AWS Support case details page for the Lambda concurrent-executions quota increase request (subject, status, category, creation time)](../docs/images/article/service-quotas-case-details.png)
 

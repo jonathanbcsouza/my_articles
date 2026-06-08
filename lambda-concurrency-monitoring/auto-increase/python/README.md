@@ -36,7 +36,7 @@ cdk deploy
 
 - Alarm threshold (default 70%): update `threshold` in `stack.py`
 - Proportional increase (default 10%): update the `INCREMENT_PERCENT` env var in `stack.py`
-- Function/topic names: update `FUNCTION_NAME` and `topic_name` in `stack.py` — note that if you rename the function, also update the `lambda:PutFunctionConcurrency` policy resource (it is scoped to this function name)
+- Function/topic names: update `FUNCTION_NAME` and `topic_name` in `stack.py`. If you rename the function, also update the `lambda:PutFunctionConcurrency` policy resource (it is scoped to this function name)
 - Optional fixed alarm name: add `alarm_name="your-name"` in the `cloudwatch.Alarm(...)` definition
 
 ## Re-enabling after the function sets its own reserved concurrency to 0
@@ -59,7 +59,7 @@ aws lambda get-function-concurrency \
 
 ## Notes
 
-- The stack creates an **SNS topic** (`lambda-concurrency-alerts`) but does not add any subscriptions. After deploying, open the topic in the SNS console (or via CLI) and add a subscription — typically an email, or an AWS Chatbot integration for Slack. Until a subscription is added, the alarm will still invoke the Lambda but no one will be notified.
+- The stack creates an **SNS topic** (`lambda-concurrency-alerts`) but does not add any subscriptions. After deploying, open the topic in the SNS console (or via CLI) and add a subscription, typically an email, or an AWS Chatbot integration for Slack. Until a subscription is added, the alarm will still invoke the Lambda but no one will be notified.
 
   Example (email subscription):
 
@@ -70,6 +70,6 @@ aws lambda get-function-concurrency \
     --notification-endpoint you@example.com
   ```
 
-  You will receive a confirmation email; click the link to activate the subscription.
+  You will receive a confirmation email. Click the link to activate the subscription.
 
 - The stack uses `Maximum`, 1-minute period, and `1/1` datapoints to match the article.
