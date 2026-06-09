@@ -28,9 +28,6 @@ For now, let's explore the concepts behind the regional concurrency limit.
 4. Setting up a CloudWatch alarm in the console
 5. Solutions to deploy a monitoring dashboard and auto-increase solution with CDK
 
-> **Note:** While using Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient, using the console first can be beneficial for learning purposes. The idea is to get familiar with the concepts first. After that, translating to IaC is straightforward.
-
-
 > **Note:** This guide uses the **AWS Console**. While Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient for production environments, using the console first can be beneficial for learning purposes. The idea is to get familiar with the concepts first. After that, translating to IaC is straightforward. If you have familiar with these concepts, ready-to-deploy CDK examples are available at the end of this article.
 
 ---
@@ -43,9 +40,11 @@ As your functions receive more requests, Lambda automatically handles scaling th
 
 There are two scaling quotas to consider: **account concurrency** and **burst concurrency**.
 
-**Account concurrency** is the hard ceiling on simultaneous executions in a Region. Every function in the account draws from the same pool. The default quota is 1,000 concurrent executions per Region, and you can raise it through Service Quotas.
+**Account concurrency:**
+- is the hard ceiling on simultaneous executions in a Region. Every function in the account draws from the same pool. The default quota is 1,000 concurrent executions per Region, and you can raise it through Service Quotas.
 
-**Burst concurrency** is different. It is the maximum rate at which functions in your account can scale in response to increased requests. That is, how quickly Lambda can create new execution environments.
+**Burst concurrency:**
+- the maximum rate at which functions in your account can scale in response to increased requests. That is, how quickly Lambda can create new execution environments.
 
 When your regional concurrency limit is hit, throttling can have a cascading effect. If your application uses Lambda as middleware between, for instance, API Gateway, SQS, Kinesis, or DynamoDB, throttles will affect how those services behave. It is important to monitor proactively.
 
@@ -187,6 +186,17 @@ As per the above, only 60 on-demand invocations are running, but 900 additional 
 ### Scenario 3: unreserved concurrency spike
 
 If any executions are running on _unreserved_ functions and `ClaimedAccountConcurrency` goes beyond the regional limit, you should expect throttling.
+
+This example builds on Scenario 2. Same allocation, then a sudden spike on unreserved functions:
+
+| Configuration | Value |
+| :------------------------------------------------ | :----- |
+| Account concurrency limit | 1,000 |
+| Reserved concurrency (function A) | 400 |
+| Reserved concurrency (function B) | 400 |
+| Provisioned concurrency (function C, PC only, no RC) | 100 |
+| Active executions (unreserved concurrent executions across functions D, E, F) | 60 |
+| New spike + (unreserved concurrent executions across functions G, H, I) | 150 |
 
 In this example, you have the Reserved concurrency for functions A, B, and C, and between functions D, E, and F you consume more than 60 concurrent environments (unreserved concurrency). Your total utilization is 960, hence available capacity is 40.
 
