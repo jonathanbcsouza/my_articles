@@ -1,6 +1,14 @@
 # Lambda Concurrency Dashboard
 
-CDK app that deploys a CloudWatch dashboard for Lambda concurrency in your account/Region, plus a **% Claimed > 70% alarm** that notifies an SNS topic (notification only, no automated action).
+This project enables you to monitor Lambda regional concurrency in your account and Region through a deployable CloudWatch dashboard. 
+
+From the dashboard you will be able to see alarm state and regional utilization, a sortable per function table that shows allocated Reserved and Provisioned Concurrency, peak concurrency, invocations, errors, and throttles per function. 
+
+Also displays top 10 throttling and erroring functions. Everything visible at a glance so you can make quick and more effective decisions. 
+
+When scaling is justified, there is also a button for logging a limit increase request. No need to go to service quotas! 
+
+This solution also builds an alarm notifies an SNS topic when utilization crosses the  **% ClaimedAccountConcurrency > 70%** (utilization) threshold . 
 
 ## Dashboard preview
 
@@ -33,9 +41,7 @@ To auto-subscribe an email to the alarm topic:
 npx cdk deploy -c alertEmail=you@example.com
 ```
 
-Open the dashboard: **CloudWatch → Dashboards → `lambda-concurrency`**
-
-After the first deploy with `-c alertEmail=...`, confirm the SNS subscription via the confirmation email AWS sends you.
+Open the dashboard: **CloudWatch -> Dashboards -> `lambda-concurrency`**
 
 ## Sample alarm email
 
@@ -55,7 +61,7 @@ New on-demand invocations may throttle soon if usage keeps climbing.
 
 What to do:
 1. Open the concurrency dashboard and identify top consumers / wasted RC.
-2. Reclaim → cap → increase (do not raise the limit during a retry storm).
+2. Make your decisions. These can be either setting RC, removing it or many others.
 
 Dashboard: https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/lambda-concurrency
 Alarm: https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#alarmsV2:alarm/lambda-concurrency-claimed-pct-70
@@ -65,22 +71,6 @@ State change: 2026-06-08T01:15:00.000+0000
 Reason: Threshold Crossed: 1 datapoint [72.5 (08/06/26 01:14:00)] was greater than the threshold (70.0).
 Region: us-east-1 | Account: 123456789012
 ```
-
-Abbreviated JSON (what actually arrives in your inbox):
-
-```json
-{
-  "AlarmName": "lambda-concurrency-claimed-pct-70",
-  "AlarmDescription": "Lambda regional concurrency claimed has exceeded 70% ...\n\nDashboard: https://...\nAlarm: https://...",
-  "NewStateValue": "ALARM",
-  "NewStateReason": "Threshold Crossed: 1 datapoint [72.5 ...] was greater than the threshold (70.0).",
-  "StateChangeTime": "2026-06-08T01:15:00.000+0000",
-  "Region": "US-East-1",
-  "AWSAccountId": "123456789012"
-}
-```
-
-Replace `us-east-1` and account ID with your Region and account. URLs in the deployed alarm are built automatically from the stack Region.
 
 ## Resources this CDK deploys
 
@@ -103,6 +93,16 @@ The alarm here is **notification only**. The optional auto-increase Lambda (`lim
 |---|---|
 | Dashboard name, 70% threshold | [`lib/concurrency-dashboard-stack.ts`](lib/concurrency-dashboard-stack.ts) |
 | Default quota increment (+10) | `DEFAULT_INCREMENT` in [`lambda/handler.py`](lambda/handler.py) |
+
+## After deploy
+
+Once deployed, ensure you can receive alarm notifications.
+
+If you passed `alertEmail` during deploy, AWS sends a confirmation message to that address. Confirm the subscription before alarms can reach you. See [Confirm your Amazon SNS subscription](https://docs.aws.amazon.com/sns/latest/dg/SendMessageToHttp.confirm.html).
+
+If you did not pass `alertEmail`, open the SNS console, select the `lambda-concurrency-alerts` topic, and create a subscription for email, HTTPS, or another supported endpoint. Confirm each subscription the same way.
+
+To forward alerts to Slack or other destinations, subscribe those endpoints to the `lambda-concurrency-alerts` topic. See [Configure Amazon SNS to send messages for alerts to other destinations (Slack)](https://docs.aws.amazon.com/prometheus/latest/userguide/AMP-alertmanager-SNS-otherdestinations.html#AMP-alertmanager-SNS-otherdestinations-Slack).
 
 ## Destroy
 
