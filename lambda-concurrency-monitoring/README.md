@@ -14,19 +14,23 @@ There are two scaling quotas to consider: **account concurrency** and **burst co
 
 **Account concurrency** is the hard ceiling on simultaneous executions in a Region. Every function in the account draws from the same pool. The default quota is 1,000 concurrent executions per Region, and you can raise it through Service Quotas.
 
-**Burst concurrency** is different. It caps how fast Lambda can scale during a sudden spike.
-
-This article explains what the regional limit really means, how to monitor it with CloudWatch, and how much on-demand capacity you actually have left in a Region.
+**Burst concurrency** is different. It is the maximum rate at which functions in your account can scale in response to increased requests. That is, how quickly Lambda can create new execution environments.
 
 When your regional concurrency limit is hit, throttling can have a cascading effect. If your application uses Lambda as middleware between, for instance, API Gateway, SQS, Kinesis, or DynamoDB, throttles will affect how those services behave. It is important to monitor proactively.
 
-This repository also includes [an example project in CDK](./dashboard/). The dashboard shows which functions hold reserved or provisioned concurrency, which are the top consumers, and whether you should reclaim, cap, or increase capacity. This article outlines the concepts behind it. For legitimate scaling traffic, you can also review the [automated limit increase](./auto-increase/), which provides a one shot automated increase while still requiring human verification.
+This article explains what the regional limit really means, how to monitor it with CloudWatch, and how to find how much capacity you actually have left in a Region.
+
+This repository also includes the [Lambda Concurrency Dashboard](./dashboard/), which is ready for deployment. This solution will enable you to proactively monitor your region, understand the top consumers, and make quick decisions between **requesting a limit increase** and **managing capacity via Reserved (RC) or Provisioned Concurrency (PC)**.
 
 ![Lambda concurrency dashboard, regional capacity, alarm, top consumers, throttles, and unreserved pool](./docs/images/dashboard/lambda-concurrency-dashboard-1.png)
 
 The dashboard also gives you an actionable button so you can make quick decisions.
 
 ![Lambda concurrency dashboard, per function allocation table with reserved and provisioned concurrency, peak concurrency, invocations, errors, and throttles](./docs/images/dashboard/lambda-concurrency-dashboard-2.png)
+
+For legitimate scaling traffic, you can also check the [Automation for Limit Increase](./auto-increase/), which provides a one shot automated increase while still requiring human verification.
+
+For now, let's explore the concepts behind the regional concurrency limit.
 
 **What we will be discussing:**
 
@@ -38,7 +42,6 @@ The dashboard also gives you an actionable button so you can make quick decision
 
 **Note:** This guide uses the **AWS Console** intentionally. While Infrastructure as Code (CloudFormation, CDK, Terraform) is more efficient for production environments, we start with the console so the mechanics are clear. Once you are familiar with the flow, translating to IaC is straightforward. Ready-to-deploy CDK examples are at the end of this article.
 
-
 ## How Lambda concurrency works
 
 Concurrency is the number of in-flight requests that your AWS Lambda function is handling at the same time. There are two types of concurrency controls available: Reserved concurrency (RC) and Provisioned concurrency (PC).
@@ -47,12 +50,9 @@ For each concurrent request, Lambda provisions a separate instance of your execu
 
 As your functions receive more requests, Lambda automatically handles scaling the number of execution environments until you reach your account's concurrency limit.
 
-As per AWS documentation, Lambda provides your account with a total concurrency limit of 1,000 concurrent executions across all functions in an AWS Region.
-
 ### What is my current limit?
 
 By default, every account gets **1,000 concurrent executions per Region**. However, this is a soft limit you can increase via [Service Quotas](https://docs.aws.amazon.com/servicequotas/latest/userguide/request-quota-increase.html).
-
 
 **Notes:**
 
@@ -64,7 +64,15 @@ For more information, please refer to [Understanding and visualizing concurrency
 
 ### Regional Concurrency x RPS
 
-Lambda also enforces a **requests per second** limit equal to 10x your concurrency limit. You can be throttled by this request rate even if concurrency is not fully utilized.
+The concurrency scaling rate differs from the account-level concurrency limit, which is the total amount of concurrency available to your functions.
+
+To protect against over-scaling in response to sudden bursts of traffic, there is a limit on how quickly new execution environments will be created. 
+
+In each AWS Region, and for each function, your concurrency scaling rate is 1,000 execution environment instances every 10 seconds (or 10,000 requests per second every 10 seconds). In other words, every 10 seconds, Lambda can allocate at most 1,000 additional execution environment instances, or accommodate 10,000 additional requests per second, to each of your functions.
+
+You can hit this scaling ceiling even when total account concurrency is not fully utilized. Sudden spikes may be throttled while capacity still appears available on the dashboard.
+
+For more information, see [Understanding and visualizing concurrency](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#understanding-concurrency).
 
 ## Visual Learner?
 
